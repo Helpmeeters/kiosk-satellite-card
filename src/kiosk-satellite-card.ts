@@ -395,11 +395,45 @@ details {
   width: 100%;
 }
 summary {
-  min-height: 32px;
+  min-height: 28px;
   display: flex;
   align-items: center;
   cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 400;
   color: var(--secondary-text-color);
+}
+.update-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+}
+.update-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.update-row [data-part="name"] {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--secondary-text-color);
+}
+.update-versions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 10px;
+}
+.section[data-section="device"] .actions button {
+  font-size: 0.85rem;
+  background: transparent;
+}
+.section[data-section="device"] a {
+  font-size: 0.85rem;
+  font-weight: 400;
+  min-height: 28px;
 }
 .missing p {
   margin: 0 0 8px;
@@ -1329,19 +1363,23 @@ class KioskSatelliteCard extends HTMLElement {
 
   private updateControl(update: UpdateControl): HTMLElement {
     const wrap = document.createElement("div");
-    wrap.className = "control";
+    wrap.className = "update-row";
     wrap.dataset.update = update.entityId;
+    const copy = document.createElement("div");
+    copy.className = "update-copy";
     const name = document.createElement("div");
     name.dataset.part = "name";
-    const title = document.createElement("p");
+    const title = document.createElement("div");
     title.className = "muted";
     title.dataset.part = "title";
-    const installed = document.createElement("p");
-    installed.className = "muted";
+    const versions = document.createElement("div");
+    versions.className = "muted update-versions";
+    const installed = document.createElement("span");
     installed.dataset.part = "installed";
-    const latest = document.createElement("p");
-    latest.className = "muted";
+    const latest = document.createElement("span");
     latest.dataset.part = "latest";
+    versions.append(installed, latest);
+    copy.append(name, title, versions);
     const install = document.createElement("button");
     install.type = "button";
     install.className = "accent";
@@ -1350,7 +1388,7 @@ class KioskSatelliteCard extends HTMLElement {
     install.addEventListener("click", () => {
       this.callService("update", "install", undefined, { entity_id: update.entityId });
     });
-    wrap.append(name, title, installed, latest, install);
+    wrap.append(copy, install);
     return this.place(wrap, "update");
   }
 
