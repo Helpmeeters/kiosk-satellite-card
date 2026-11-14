@@ -42,13 +42,6 @@ interface Hass {
 
 type SettingControl = VolumeControl | SelectControl | SwitchControl | ButtonControl | LightControl;
 
-interface HaFormElement extends HTMLElement {
-  hass?: Hass;
-  data?: unknown;
-  schema?: unknown;
-  computeLabel?: (schema: { name?: string }) => string;
-}
-
 interface SliderElement extends HTMLElement {
   min: number;
   max: number;
@@ -81,29 +74,36 @@ const DAYS: ReadonlyArray<readonly [string, string]> = [
   ["sun", "Sun"],
 ];
 
-const EDITOR_SCHEMA = [
-  {
-    name: "device",
-    required: true,
-    selector: {
-      device: {
-        manufacturer: "kiosk_satellite",
-        entity: { domain: "assist_satellite" },
+const CONFIG_FORM = {
+  schema: [
+    {
+      name: "device",
+      required: true,
+      selector: {
+        device: {
+          manufacturer: "kiosk_satellite",
+          entity: { domain: "assist_satellite" },
+        },
       },
     },
-  },
-  {
-    name: "style",
-    selector: {
-      select: {
-        options: [
-          { value: "panel", label: "Panel" },
-          { value: "button", label: "Button" },
-        ],
+    {
+      name: "style",
+      selector: {
+        select: {
+          options: [
+            { value: "panel", label: "Panel" },
+            { value: "button", label: "Button" },
+          ],
+        },
       },
     },
+  ],
+  computeLabel(schema: { name?: string }): string | undefined {
+    if (schema.name === "device") return "Kiosk satellite";
+    if (schema.name === "style") return "Style";
+    return undefined;
   },
-];
+};
 
 const CSS = `
 :host {
@@ -331,12 +331,6 @@ summary {
 }
 `;
 
-function editorLabel(schema: { name?: string }): string {
-  if (schema.name === "device") return "Kiosk satellite";
-  if (schema.name === "style") return "Style";
-  return schema.name ?? "";
-}
-
 function devicesFrom(hass: Hass): DeviceEntry[] {
   if (!hass.devices) return [];
   return Object.entries(hass.devices).map(([key, device]) => ({
@@ -545,50 +539,6 @@ function optionList(options: string[], value: string): string[] {
   return options;
 }
 
-class KioskSatelliteCardEditor extends HTMLElement {
-  private _hass?: Hass;
-  private _config: Record<string, unknown> = {};
-  private readonly form: HaFormElement;
-
-  constructor() {
-    super();
-    const form = document.createElement("ha-form") as HaFormElement;
-    form.schema = EDITOR_SCHEMA;
-    form.computeLabel = editorLabel;
-    form.addEventListener("value-changed", (event) => {
-      event.stopPropagation();
-      const value = (event as CustomEvent<{ value?: unknown }>).detail?.value;
-      if (!value || typeof value !== "object") return;
-      this._config = { ...this._config, ...(value as Record<string, unknown>) };
-      this.dispatchEvent(
-        new CustomEvent("config-changed", {
-          detail: { config: this._config },
-          bubbles: true,
-          composed: true,
-        }),
-      );
-    });
-    this.form = form;
-    this.append(form);
-  }
-
-  set hass(value: Hass) {
-    this._hass = value;
-    this.form.hass = value;
-  }
-
-  get hass(): Hass | undefined {
-    return this._hass;
-  }
-
-  setConfig(config: unknown): void {
-    const source = config && typeof config === "object" ? (config as Record<string, unknown>) : {};
-    this._config = { ...source };
-    this.form.data = this._config;
-    if (this._hass) this.form.hass = this._hass;
-  }
-}
-
 class KioskSatelliteCard extends HTMLElement {
   private _config?: CardConfig;
   private _hass?: Hass;
@@ -612,8 +562,12 @@ class KioskSatelliteCard extends HTMLElement {
     this.attachShadow({ mode: "open" });
   }
 
-  static getConfigElement(): HTMLElement {
-    return document.createElement("kiosk-satellite-card-editor");
+  static getConfigForm(): typeof CONFIG_FORM {
+    return CONFIG_FORM;
+  }
+
+  getConfigForm(): typeof CONFIG_FORM {
+    return KioskSatelliteCard.getConfigForm();
   }
 
   static getStubConfig(hass?: Hass): CardConfig {
@@ -1703,10 +1657,6 @@ class KioskSatelliteCard extends HTMLElement {
     }
     return null;
   }
-}
-
-if (!customElements.get("kiosk-satellite-card-editor")) {
-  customElements.define("kiosk-satellite-card-editor", KioskSatelliteCardEditor);
 }
 
 if (!customElements.get("kiosk-satellite-card")) {
