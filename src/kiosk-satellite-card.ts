@@ -15,6 +15,7 @@ import {
   type UpdateControl,
   type VolumeControl,
 } from "./model";
+import { spansFullWidth, type ColumnRole } from "./layout";
 
 interface Hass {
   states: Record<string, EntityState>;
@@ -74,8 +75,7 @@ const DAYS: ReadonlyArray<readonly [string, string]> = [
   ["sun", "Sun"],
 ];
 
-const RELEASE_MARKER = "kiosk-satellite-card@0.1.2";
-const HALF_LABEL_CHARS = 32;
+const RELEASE_MARKER = "kiosk-satellite-card@0.1.3";
 
 const CONFIG_FORM = {
   schema: [
@@ -132,12 +132,10 @@ ha-card {
   flex-direction: column;
   width: 100%;
   padding: 8px 10px;
-  container-type: inline-size;
-  container-name: kiosk;
 }
 .section {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: 1fr 1fr;
   column-gap: 8px;
   row-gap: 4px;
   width: 100%;
@@ -151,17 +149,8 @@ ha-card {
   padding-top: 8px;
   border-top: 1px solid var(--divider-color);
 }
-.half,
-.full {
+.span {
   grid-column: 1 / -1;
-}
-@container kiosk (min-width: 500px) {
-  .section {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  }
-  .half {
-    grid-column: auto;
-  }
 }
 .label {
   margin: 0;
@@ -423,11 +412,6 @@ function buttonSubtitle(model: SatelliteModel): string {
 
 function mediaActive(state: string | undefined): boolean {
   return state === "playing" || state === "paused" || state === "buffering";
-}
-
-function shortLabel(label: string): boolean {
-  const text = label.trim();
-  return text.length > 0 && text.length <= HALF_LABEL_CHARS;
 }
 
 function showBrightness(light: LightControl): boolean {
@@ -818,7 +802,7 @@ class KioskSatelliteCard extends HTMLElement {
       const heading = document.createElement("h3");
       heading.className = "label";
       heading.textContent = title;
-      this.tag(heading, title, false);
+      this.place(heading, "heading");
       node.append(heading);
     }
     return node;
@@ -829,13 +813,13 @@ class KioskSatelliteCard extends HTMLElement {
     const name = document.createElement("h2");
     name.className = "device-name";
     name.dataset.part = "title";
-    this.tag(name, "", false);
+    this.place(name, "device-name");
     const assist = document.createElement("p");
     assist.className = "muted";
     assist.dataset.part = "assist";
-    this.tag(assist, "", false);
+    this.place(assist, "header-status");
     section.append(name, assist);
-    for (const line of this.model?.header ?? []) section.append(this.sensorLine(line, true));
+    for (const line of this.model?.header ?? []) section.append(this.sensorLine(line, "header-status"));
     return section;
   }
 
@@ -846,7 +830,7 @@ class KioskSatelliteCard extends HTMLElement {
     section.hidden = !mediaActive(model.media.state);
     const block = document.createElement("div");
     block.className = "media-block";
-    this.tag(block, "", false);
+    this.place(block, "media");
     const slot = document.createElement("div");
     slot.className = "media-slot";
     slot.dataset.mediaSlot = "";
@@ -884,7 +868,7 @@ class KioskSatelliteCard extends HTMLElement {
     readout.dataset.format = percent ? "percent" : "number";
     head.append(name, readout);
     wrap.append(head, this.slider(volume.entityId, "volume"));
-    return this.tag(wrap, volume.name, true);
+    return this.place(wrap, "volume");
   }
 
   private slider(entityId: string, kind: "volume" | "brightness"): SliderElement {
@@ -928,12 +912,12 @@ class KioskSatelliteCard extends HTMLElement {
       line.dataset.ringing = "";
       line.textContent = "Alarm ringing";
       line.hidden = !alarms.ringing;
-      this.tag(line, "Alarm ringing", true);
+      this.place(line, "alarm-status");
       const actions = document.createElement("div");
       actions.className = "actions";
       actions.dataset.ringing = "";
       actions.hidden = !alarms.ringing;
-      this.tag(actions, "", false);
+      this.place(actions, "alarm-actions");
       if (alarms.snoozeId) actions.append(this.alarmPress("Snooze", "snooze"));
       if (alarms.stopId) actions.append(this.alarmPress("Stop", "stop"));
       section.append(line, actions);
@@ -961,7 +945,7 @@ class KioskSatelliteCard extends HTMLElement {
     value.className = "value";
     value.dataset.part = part;
     row.append(name, value);
-    return this.tag(row, label, true);
+    return this.place(row, "alarm-status");
   }
 
   private alarmPress(label: string, which: "snooze" | "stop"): HTMLButtonElement {
@@ -1029,7 +1013,7 @@ class KioskSatelliteCard extends HTMLElement {
       void this.runAlarm("set", entry);
     });
     form.append(time, label, days, set);
-    return this.tag(form, "", false);
+    return this.place(form, "alarm-form");
   }
 
   private listButton(): HTMLElement {
@@ -1039,13 +1023,13 @@ class KioskSatelliteCard extends HTMLElement {
     button.addEventListener("click", () => {
       void this.runAlarm("list");
     });
-    return this.tag(button, "List", false);
+    return this.place(button, "alarm-list");
   }
 
   private alarmResultHost(): HTMLElement {
     const host = document.createElement("div");
     host.dataset.alarmResult = "";
-    return this.tag(host, "", false);
+    return this.place(host, "alarm-result");
   }
 
   private readAlarmForm(): { time: string; label: string; days: string[] } {
@@ -1068,11 +1052,11 @@ class KioskSatelliteCard extends HTMLElement {
     const section = this.section("Voice", "voice");
     for (const select of model.voiceSelects) section.append(this.selectControl(select));
     for (const toggle of model.voiceSwitches) section.append(this.switchControl(toggle));
-    for (const line of model.timers) section.append(this.sensorLine(line, true));
+    for (const line of model.timers) section.append(this.sensorLine(line, "timer"));
     return section;
   }
 
-  private selectControl(control: SelectControl): HTMLElement {
+  private selectControl(control: SelectControl, role: ColumnRole = "select"): HTMLElement {
     const field = document.createElement("label");
     field.className = "field";
     const name = document.createElement("span");
@@ -1085,14 +1069,14 @@ class KioskSatelliteCard extends HTMLElement {
       this.callService("select", "select_option", { option: select.value }, { entity_id: control.entityId });
     });
     field.append(name, select);
-    return this.tag(field, control.name, true);
+    return this.place(field, role);
   }
 
   private switchControl(control: SwitchControl): HTMLElement {
-    return this.toggleRow(control.entityId, control.name, "switch");
+    return this.toggleRow(control.entityId, control.name, "switch", "switch");
   }
 
-  private toggleRow(entityId: string, name: string, domain: "switch" | "light"): HTMLElement {
+  private toggleRow(entityId: string, name: string, domain: "switch" | "light", role: ColumnRole): HTMLElement {
     const row = document.createElement("div");
     row.className = "switch-row";
     const label = document.createElement("span");
@@ -1110,7 +1094,7 @@ class KioskSatelliteCard extends HTMLElement {
       }
     });
     row.append(label, toggle);
-    return this.tag(row, name, true);
+    return this.place(row, role);
   }
 
   private lightSection(model: SatelliteModel): HTMLElement | undefined {
@@ -1119,12 +1103,12 @@ class KioskSatelliteCard extends HTMLElement {
     if (model.light) {
       for (const part of this.lightParts(model.light)) section.append(part);
     }
-    for (const line of model.ambient) section.append(this.sensorLine(line, true));
+    for (const line of model.ambient) section.append(this.sensorLine(line, "ambient"));
     return section;
   }
 
   private lightParts(light: LightControl): HTMLElement[] {
-    const parts: HTMLElement[] = [this.toggleRow(light.entityId, light.name, "light")];
+    const parts: HTMLElement[] = [this.toggleRow(light.entityId, light.name, "light", "led")];
     const brightness = document.createElement("div");
     brightness.className = "control";
     brightness.dataset.brightnessWrap = light.entityId;
@@ -1139,15 +1123,18 @@ class KioskSatelliteCard extends HTMLElement {
     readout.dataset.format = "number";
     head.append(name, readout);
     brightness.append(head, this.slider(light.entityId, "brightness"));
-    parts.push(this.tag(brightness, "Brightness", true));
+    parts.push(this.place(brightness, "brightness"));
     if (light.effectEntityId) {
       parts.push(
-        this.selectControl({
-          entityId: light.effectEntityId,
-          name: "Effect",
-          options: light.effectOptions,
-          value: light.effect ?? "",
-        }),
+        this.selectControl(
+          {
+            entityId: light.effectEntityId,
+            name: "Effect",
+            options: light.effectOptions,
+            value: light.effect ?? "",
+          },
+          "effect",
+        ),
       );
     }
     return parts;
@@ -1167,7 +1154,7 @@ class KioskSatelliteCard extends HTMLElement {
     if (isLight(control)) return this.lightParts(control);
     if (isSelect(control)) return [this.selectControl(control)];
     if (isSwitch(control)) return [this.switchControl(control)];
-    return [this.tag(this.pressButton(control), control.name, true)];
+    return [this.place(this.pressButton(control), "setting")];
   }
 
   private pressButton(control: ButtonControl): HTMLButtonElement {
@@ -1192,7 +1179,7 @@ class KioskSatelliteCard extends HTMLElement {
     if (model.actions.length > 0) {
       const actions = document.createElement("div");
       actions.className = "actions";
-      this.tag(actions, "", false);
+      this.place(actions, "restart");
       for (const action of model.actions) actions.append(this.pressButton(action));
       section.append(actions);
     }
@@ -1203,7 +1190,7 @@ class KioskSatelliteCard extends HTMLElement {
       link.target = "_blank";
       link.rel = "noopener noreferrer";
       link.href = model.remoteAdmin;
-      this.tag(link, "Remote admin", false);
+      this.place(link, "remote");
       section.append(link);
     }
     if (model.diagnostics.length > 0) {
@@ -1211,9 +1198,9 @@ class KioskSatelliteCard extends HTMLElement {
       const summary = document.createElement("summary");
       summary.textContent = "Diagnostics";
       const body = document.createElement("div");
-      for (const line of model.diagnostics) body.append(this.sensorLine(line, false));
+      for (const line of model.diagnostics) body.append(this.sensorLine(line, "diagnostics"));
       details.append(summary, body);
-      this.tag(details, "Diagnostics", false);
+      this.place(details, "diagnostics");
       section.append(details);
     }
     return section;
@@ -1243,10 +1230,10 @@ class KioskSatelliteCard extends HTMLElement {
       this.callService("update", "install", undefined, { entity_id: update.entityId });
     });
     wrap.append(name, title, installed, latest, install);
-    return this.tag(wrap, update.name, false);
+    return this.place(wrap, "update");
   }
 
-  private sensorLine(line: SensorLine, allowHalf: boolean): HTMLElement {
+  private sensorLine(line: SensorLine, role: ColumnRole): HTMLElement {
     const row = document.createElement("div");
     row.className = "line";
     row.dataset.line = line.entityId;
@@ -1258,7 +1245,7 @@ class KioskSatelliteCard extends HTMLElement {
     value.dataset.part = "value";
     value.textContent = sensorValue(line);
     row.append(name, value);
-    return this.tag(row, line.name, allowHalf);
+    return this.place(row, role);
   }
 
   private patch(model: SatelliteModel): void {
@@ -1295,7 +1282,6 @@ class KioskSatelliteCard extends HTMLElement {
       if (ringingNodes) {
         for (const node of ringingNodes) node.hidden = !model.alarms.ringing;
       }
-      this.packAll();
     } finally {
       this.syncing = false;
       queueMicrotask(() => {
@@ -1348,34 +1334,9 @@ class KioskSatelliteCard extends HTMLElement {
     this.mediaCardEntity = undefined;
   }
 
-  private tag(node: HTMLElement, label: string, allowHalf: boolean): HTMLElement {
-    node.dataset.width = allowHalf && shortLabel(label) ? "half" : "full";
+  private place(node: HTMLElement, role: ColumnRole): HTMLElement {
+    if (spansFullWidth(role)) node.classList.add("span");
     return node;
-  }
-
-  private packAll(): void {
-    const sections = this.shadowRoot?.querySelectorAll<HTMLElement>(".section");
-    if (!sections) return;
-    for (const section of sections) this.pack(section);
-  }
-
-  private pack(section: HTMLElement): void {
-    const children = [...section.children].filter((node): node is HTMLElement => node instanceof HTMLElement);
-    for (const node of children) node.classList.remove("half", "full");
-    const visible = children.filter((node) => !node.hidden);
-    let index = 0;
-    while (index < visible.length) {
-      const current = visible[index];
-      const next = visible[index + 1];
-      if (current.dataset.width === "half" && next?.dataset.width === "half") {
-        current.classList.add("half");
-        next.classList.add("half");
-        index += 2;
-        continue;
-      }
-      current.classList.add("full");
-      index += 1;
-    }
   }
 
   private patchVolumes(model: SatelliteModel): void {
