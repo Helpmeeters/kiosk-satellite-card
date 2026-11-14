@@ -333,21 +333,34 @@ ha-icon {
   width: 100%;
   color: var(--secondary-text-color);
 }
+[data-alarm-form] {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 8px;
+  row-gap: 4px;
+  align-items: end;
+}
 .days {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 12px;
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 2px;
 }
 .days label {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 6px;
-  min-height: 32px;
+  justify-content: center;
+  gap: 1px;
+  min-width: 0;
+  min-height: 36px;
+  font-size: 0.75rem;
+  line-height: 1.1;
   color: var(--primary-text-color);
 }
 .days input {
-  width: 20px;
-  height: 20px;
+  width: 16px;
+  height: 16px;
+  margin: 0;
 }
 .alarm {
   display: flex;
@@ -1032,7 +1045,7 @@ class KioskSatelliteCard extends HTMLElement {
       section.append(row);
     }
     if (alarms.scriptAvailable) {
-      section.append(this.alarmForm(), this.listButton(), this.alarmResultHost());
+      section.append(this.alarmForm(), this.alarmResultHost());
     }
     return section;
   }
@@ -1100,6 +1113,14 @@ class KioskSatelliteCard extends HTMLElement {
       days.append(boxLabel);
     }
 
+    const actions = document.createElement("div");
+    actions.className = "actions";
+    actions.append(this.setButton(), this.listButton());
+    form.append(time, label, this.place(days, "alarm-form"), this.place(actions, "alarm-list"));
+    return this.place(form, "alarm-form");
+  }
+
+  private setButton(): HTMLButtonElement {
     const set = document.createElement("button");
     set.type = "button";
     set.className = "accent";
@@ -1113,18 +1134,17 @@ class KioskSatelliteCard extends HTMLElement {
       }
       void this.runAlarm("set", entry);
     });
-    form.append(time, label, days, set);
-    return this.place(form, "alarm-form");
+    return set;
   }
 
-  private listButton(): HTMLElement {
+  private listButton(): HTMLButtonElement {
     const button = document.createElement("button");
     button.type = "button";
     button.textContent = "List";
     button.addEventListener("click", () => {
       void this.runAlarm("list");
     });
-    return this.place(button, "alarm-list");
+    return button;
   }
 
   private alarmResultHost(): HTMLElement {
