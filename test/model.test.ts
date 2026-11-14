@@ -174,7 +174,7 @@ describe("buildModel", () => {
       ],
     );
     assert.equal(built.voiceSelects.some((item) => item.name === "Wake word" && item.value === "Hey Jarvis"), true);
-    assert.equal(built.voiceSwitches.some((item) => item.name === "VS Mute" && item.on === false), true);
+    assert.equal(built.voiceSwitches.some((item) => item.name === "Mute" && item.on === false), true);
     assert.deepEqual(
       built.actions.map((action) => [action.name, action.confirm]),
       [
@@ -237,7 +237,7 @@ describe("buildModel", () => {
         },
         { entityId: "select.updoot_assistant", name: "Assistant", options: [], value: "Qwen" },
       ],
-      voiceSwitches: [{ entityId: "switch.updoot_vs_mute", name: "VS Mute", on: false }],
+      voiceSwitches: [{ entityId: "switch.updoot_vs_mute", name: "Mute", on: false }],
       timers: [],
       light: {
         entityId: "light.updoot_led_control_idle",
@@ -474,6 +474,16 @@ describe("buildModel", () => {
           original_name: "Theme",
           entity_category: "config",
         }),
+        entry("select.engine", {
+          device_id: "dev1",
+          original_name: "VS Wake word engine",
+          entity_category: "config",
+        }),
+        entry("number.vs_delay", {
+          device_id: "dev1",
+          original_name: "VS Delay",
+          entity_category: "config",
+        }),
         entry("light.accent", { device_id: "dev1", original_name: "Accent", entity_category: "config" }),
         entry("sensor.timers", { device_id: "dev1", original_name: "VS Timers" }),
         entry("sensor.next_timer", { device_id: "dev1", original_name: "VS Next timer" }),
@@ -512,6 +522,8 @@ describe("buildModel", () => {
         "switch.chimes": state("on"),
         "switch.intercom": state("off"),
         "select.theme": state("Dark", { options: ["Dark", "Light"] }),
+        "select.engine": state("openWakeWord", { options: ["openWakeWord", "microWakeWord"] }),
+        "number.vs_delay": state("4", { min: 0, max: 10, step: 1 }),
         "light.accent": state("on", { brightness: 128 }),
         "sensor.timers": state("2", { unit_of_measurement: "", device_class: "duration" }),
         "sensor.next_timer": state("5", { unit_of_measurement: "min" }),
@@ -528,8 +540,14 @@ describe("buildModel", () => {
     });
 
     assert.deepEqual(
+      built.voiceSelects.map((item) => item.name),
+      ["Wake word engine"],
+    );
+    assert.equal(built.settings.some((item) => item.name === "VS Delay"), true);
+    assert.equal(built.settings.some((item) => item.name === "Delay"), false);
+    assert.deepEqual(
       built.voiceSwitches.map((item) => item.name),
-      ["VS Chimes", "Intercom enabled", "VS Alpha", "VS Extra mode"],
+      ["Chimes", "Intercom enabled", "Alpha", "Extra mode"],
     );
     const night = built.settings.find((item) => item.name === "Night mode") as SwitchControl;
     assert.equal(night.on, true);
@@ -542,7 +560,7 @@ describe("buildModel", () => {
     assert.deepEqual(accent.effectOptions, []);
     assert.deepEqual(
       built.timers.map((line) => line.name),
-      ["VS Timers", "VS Next timer"],
+      ["Timers", "Next timer"],
     );
     assert.equal(built.timers[0]?.unit, undefined);
     assert.equal(built.timers[0]?.deviceClass, "duration");

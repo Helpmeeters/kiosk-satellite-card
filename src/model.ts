@@ -199,9 +199,11 @@ export function buildModel(input: ModelInput): SatelliteModel {
   const alarms = buildAlarms(entries, states, used, name, input.alarmScript === true);
   const voiceSelects = takeNamed(entries, ["select"], VOICE_SELECTS, used, (entry) =>
     selectControl(entry, states),
-  );
+  ).map(voiceLabel);
   const voiceSwitches = takeVoiceSwitches(entries, states, used);
-  const timers = takeNamed(entries, ["sensor"], TIMER_NAMES, used, (entry) => sensorLine(entry, states));
+  const timers = takeNamed(entries, ["sensor"], TIMER_NAMES, used, (entry) => sensorLine(entry, states)).map(
+    voiceLabel,
+  );
   const light = takeLight(entries, states, used);
   const ambient = takeNamed(entries, ["sensor"], AMBIENT_NAMES, used, (entry) => sensorLine(entry, states));
   const header = takeNamed(entries, SENSOR_DOMAINS, HEADER_NAMES, used, (entry) => sensorLine(entry, states));
@@ -275,6 +277,13 @@ function displayName(entry: RegistryEntry): string {
   if (typeof entry.original_name === "string" && entry.original_name.length > 0) return entry.original_name;
   if (typeof entry.name === "string" && entry.name.length > 0) return entry.name;
   return objectId(entry.entity_id).replace(/_/g, " ");
+}
+
+/** Voice Satellite names are prefixed "VS ". The Voice section shows the rest. */
+function voiceLabel<T extends { name: string }>(control: T): T {
+  const name = control.name.replace(/^VS\s+/i, "");
+  if (name === control.name) return control;
+  return { ...control, name };
 }
 
 function normalize(name: string): string {
@@ -505,7 +514,7 @@ function takeVoiceSwitches(
   );
   extras.sort((a, b) => displayName(a).localeCompare(displayName(b), undefined, { sensitivity: "base" }));
   for (const entry of extras) used.add(entry.entity_id);
-  return [...ordered, ...extras.map((entry) => switchControl(entry, states))];
+  return [...ordered, ...extras.map((entry) => switchControl(entry, states))].map(voiceLabel);
 }
 
 function takeLight(

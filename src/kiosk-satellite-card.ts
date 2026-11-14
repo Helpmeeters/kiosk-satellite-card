@@ -74,6 +74,9 @@ const DAYS: ReadonlyArray<readonly [string, string]> = [
   ["sun", "Sun"],
 ];
 
+const RELEASE_MARKER = "kiosk-satellite-card@0.1.2";
+const HALF_LABEL_CHARS = 32;
+
 const CONFIG_FORM = {
   schema: [
     {
@@ -128,18 +131,37 @@ ha-card {
   display: flex;
   flex-direction: column;
   width: 100%;
-  padding: 16px;
+  padding: 8px 10px;
+  container-type: inline-size;
+  container-name: kiosk;
 }
 .section {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  column-gap: 8px;
+  row-gap: 4px;
   width: 100%;
+  align-items: start;
+}
+.section > * {
+  min-width: 0;
 }
 .section + .section {
-  margin-top: 16px;
-  padding-top: 16px;
+  margin-top: 8px;
+  padding-top: 8px;
   border-top: 1px solid var(--divider-color);
+}
+.half,
+.full {
+  grid-column: 1 / -1;
+}
+@container kiosk (min-width: 500px) {
+  .section {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .half {
+    grid-column: auto;
+  }
 }
 .label {
   margin: 0;
@@ -163,12 +185,12 @@ ha-card {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
   width: 100%;
 }
 .line,
 .switch-row {
-  min-height: 48px;
+  min-height: 36px;
 }
 .value {
   color: var(--secondary-text-color);
@@ -177,21 +199,21 @@ ha-card {
 .control {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
   width: 100%;
 }
 ha-control-slider {
   display: block;
   width: 100%;
-  min-height: 40px;
+  min-height: 32px;
   --control-slider-color: var(--primary-color);
 }
 button,
 select,
 input[type="time"],
 input[type="text"] {
-  min-height: 48px;
-  padding: 8px 16px;
+  min-height: 36px;
+  padding: 4px 10px;
   border: 1px solid var(--divider-color);
   border-radius: 8px;
   background: var(--ha-card-background);
@@ -213,39 +235,35 @@ input[type="text"] {
 .actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
-.now {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
-}
-.art {
-  width: 88px;
-  height: 88px;
-  object-fit: cover;
-  flex: 0 0 auto;
-  background: var(--divider-color);
-}
-.now-copy {
+.media-block {
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: 4px;
+  width: 100%;
   min-width: 0;
-  flex: 1;
 }
-.track {
-  margin: 0;
-  font-size: 1.05rem;
+.media-slot {
+  width: 100%;
+  min-width: 0;
+}
+.media-slot > * {
+  display: block;
+  width: 100%;
+}
+button.favorite {
+  min-height: 32px;
+  padding: 2px 10px;
 }
 .button-row {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   width: 100%;
-  min-height: 72px;
-  padding: 12px 16px;
+  min-height: 48px;
+  padding: 8px 10px;
   cursor: pointer;
   color: var(--primary-text-color);
 }
@@ -267,7 +285,7 @@ ha-icon {
 .field {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
   width: 100%;
   color: var(--secondary-text-color);
 }
@@ -280,7 +298,7 @@ ha-icon {
   display: flex;
   align-items: center;
   gap: 6px;
-  min-height: 48px;
+  min-height: 32px;
   color: var(--primary-text-color);
 }
 .days input {
@@ -290,9 +308,9 @@ ha-icon {
 .alarm {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
   width: 100%;
-  padding-top: 8px;
+  padding-top: 4px;
 }
 .ringing {
   margin: 0;
@@ -312,7 +330,7 @@ ha-icon {
 }
 a {
   color: var(--primary-color);
-  min-height: 48px;
+  min-height: 32px;
   display: inline-flex;
   align-items: center;
 }
@@ -320,7 +338,7 @@ details {
   width: 100%;
 }
 summary {
-  min-height: 48px;
+  min-height: 32px;
   display: flex;
   align-items: center;
   cursor: pointer;
@@ -403,13 +421,31 @@ function buttonSubtitle(model: SatelliteModel): string {
   return primary || alarm || "";
 }
 
-function trackLabel(model: SatelliteModel): string {
-  if (model.media.title) return model.media.title;
-  return model.media.state ?? "";
+function mediaActive(state: string | undefined): boolean {
+  return state === "playing" || state === "paused" || state === "buffering";
+}
+
+function shortLabel(label: string): boolean {
+  const text = label.trim();
+  return text.length > 0 && text.length <= HALF_LABEL_CHARS;
 }
 
 function showBrightness(light: LightControl): boolean {
-  return typeof light.brightness === "number" || light.state === "on";
+  return light.state === "on";
+}
+
+interface LovelaceCardElement extends HTMLElement {
+  hass?: Hass;
+}
+
+interface LovelaceCardHelpers {
+  createCardElement(config: { type: string; entity: string }): LovelaceCardElement | Promise<LovelaceCardElement>;
+}
+
+function cardHelpersLoader(): (() => Promise<LovelaceCardHelpers>) | undefined {
+  const value = (window as unknown as { loadCardHelpers?: unknown }).loadCardHelpers;
+  if (typeof value !== "function") return undefined;
+  return value as () => Promise<LovelaceCardHelpers>;
 }
 
 function isVolume(control: SettingControl): control is VolumeControl {
@@ -552,6 +588,9 @@ class KioskSatelliteCard extends HTMLElement {
   private alarmItems?: AlarmEntry[];
   private alarmPaintKey = "";
   private alarmDevice?: string;
+  private mediaCard?: LovelaceCardElement;
+  private mediaCardEntity?: string;
+  private mediaRequest = 0;
 
   private readonly endDrag = (): void => {
     this.dragging.clear();
@@ -647,6 +686,9 @@ class KioskSatelliteCard extends HTMLElement {
   }
 
   private build(model: SatelliteModel): void {
+    this.mediaRequest += 1;
+    this.mediaCard = undefined;
+    this.mediaCardEntity = undefined;
     const root = this.shadowRoot;
     if (!root) return;
     let style = root.querySelector("style");
@@ -657,6 +699,7 @@ class KioskSatelliteCard extends HTMLElement {
     }
     root.querySelector("ha-card")?.remove();
     const card = document.createElement("ha-card");
+    card.dataset.release = RELEASE_MARKER;
     if (model.missing) card.append(this.missingView());
     else if (this._config?.style === "button") card.append(this.buttonRow(), this.dialogShell());
     else card.append(this.panel(model));
@@ -775,6 +818,7 @@ class KioskSatelliteCard extends HTMLElement {
       const heading = document.createElement("h3");
       heading.className = "label";
       heading.textContent = title;
+      this.tag(heading, title, false);
       node.append(heading);
     }
     return node;
@@ -785,69 +829,38 @@ class KioskSatelliteCard extends HTMLElement {
     const name = document.createElement("h2");
     name.className = "device-name";
     name.dataset.part = "title";
+    this.tag(name, "", false);
     const assist = document.createElement("p");
     assist.className = "muted";
     assist.dataset.part = "assist";
-    const sensors = document.createElement("div");
-    sensors.dataset.part = "header-sensors";
-    for (const line of this.model?.header ?? []) sensors.append(this.sensorLine(line));
-    section.append(name, assist, sensors);
+    this.tag(assist, "", false);
+    section.append(name, assist);
+    for (const line of this.model?.header ?? []) section.append(this.sensorLine(line, true));
     return section;
   }
 
   private nowPlayingSection(model: SatelliteModel): HTMLElement | undefined {
-    if (!model.media.playerId) return undefined;
-    const section = this.section("Now playing", "now-playing");
-    const row = document.createElement("div");
-    row.className = "now";
-    const image = document.createElement("img");
-    image.className = "art";
-    image.alt = "";
-    image.dataset.part = "picture";
-    image.hidden = true;
-    const copy = document.createElement("div");
-    copy.className = "now-copy";
-    const title = document.createElement("p");
-    title.className = "track";
-    title.dataset.part = "track";
-    const artist = document.createElement("p");
-    artist.className = "muted";
-    artist.dataset.part = "artist";
-    copy.append(title, artist);
-    row.append(image, copy);
-
-    const actions = document.createElement("div");
-    actions.className = "actions";
-    actions.append(
-      this.mediaButton("Previous", "media_previous_track"),
-      this.mediaButton("Play", "play"),
-      this.mediaButton("Next", "media_next_track"),
-    );
+    const playerId = model.media.playerId;
+    if (!playerId || !cardHelpersLoader()) return undefined;
+    const section = this.section(undefined, "now-playing");
+    section.hidden = !mediaActive(model.media.state);
+    const block = document.createElement("div");
+    block.className = "media-block";
+    this.tag(block, "", false);
+    const slot = document.createElement("div");
+    slot.className = "media-slot";
+    slot.dataset.mediaSlot = "";
+    block.append(slot);
     if (model.media.favoriteId) {
       const favorite = document.createElement("button");
       favorite.type = "button";
+      favorite.className = "favorite";
       favorite.textContent = "Favorite";
       favorite.addEventListener("click", () => this.press(this.model?.media.favoriteId));
-      actions.append(favorite);
+      block.append(favorite);
     }
-    section.append(row, actions);
+    section.append(block);
     return section;
-  }
-
-  private mediaButton(label: string, action: "media_previous_track" | "media_next_track" | "play"): HTMLButtonElement {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "accent";
-    button.textContent = label;
-    if (action === "play") button.dataset.part = "play";
-    button.addEventListener("click", () => {
-      const playerId = this.model?.media.playerId;
-      if (!playerId) return;
-      const service =
-        action === "play" ? (this.model?.media.state === "playing" ? "media_pause" : "media_play") : action;
-      this.callService("media_player", service, undefined, { entity_id: playerId });
-    });
-    return button;
   }
 
   private volumeSection(model: SatelliteModel): HTMLElement | undefined {
@@ -871,7 +884,7 @@ class KioskSatelliteCard extends HTMLElement {
     readout.dataset.format = percent ? "percent" : "number";
     head.append(name, readout);
     wrap.append(head, this.slider(volume.entityId, "volume"));
-    return wrap;
+    return this.tag(wrap, volume.name, true);
   }
 
   private slider(entityId: string, kind: "volume" | "brightness"): SliderElement {
@@ -915,10 +928,12 @@ class KioskSatelliteCard extends HTMLElement {
       line.dataset.ringing = "";
       line.textContent = "Alarm ringing";
       line.hidden = !alarms.ringing;
+      this.tag(line, "Alarm ringing", true);
       const actions = document.createElement("div");
       actions.className = "actions";
       actions.dataset.ringing = "";
       actions.hidden = !alarms.ringing;
+      this.tag(actions, "", false);
       if (alarms.snoozeId) actions.append(this.alarmPress("Snooze", "snooze"));
       if (alarms.stopId) actions.append(this.alarmPress("Stop", "stop"));
       section.append(line, actions);
@@ -946,7 +961,7 @@ class KioskSatelliteCard extends HTMLElement {
     value.className = "value";
     value.dataset.part = part;
     row.append(name, value);
-    return row;
+    return this.tag(row, label, true);
   }
 
   private alarmPress(label: string, which: "snooze" | "stop"): HTMLButtonElement {
@@ -1014,23 +1029,23 @@ class KioskSatelliteCard extends HTMLElement {
       void this.runAlarm("set", entry);
     });
     form.append(time, label, days, set);
-    return form;
+    return this.tag(form, "", false);
   }
 
-  private listButton(): HTMLButtonElement {
+  private listButton(): HTMLElement {
     const button = document.createElement("button");
     button.type = "button";
     button.textContent = "List";
     button.addEventListener("click", () => {
       void this.runAlarm("list");
     });
-    return button;
+    return this.tag(button, "List", false);
   }
 
   private alarmResultHost(): HTMLElement {
     const host = document.createElement("div");
     host.dataset.alarmResult = "";
-    return host;
+    return this.tag(host, "", false);
   }
 
   private readAlarmForm(): { time: string; label: string; days: string[] } {
@@ -1053,7 +1068,7 @@ class KioskSatelliteCard extends HTMLElement {
     const section = this.section("Voice", "voice");
     for (const select of model.voiceSelects) section.append(this.selectControl(select));
     for (const toggle of model.voiceSwitches) section.append(this.switchControl(toggle));
-    for (const line of model.timers) section.append(this.sensorLine(line));
+    for (const line of model.timers) section.append(this.sensorLine(line, true));
     return section;
   }
 
@@ -1070,7 +1085,7 @@ class KioskSatelliteCard extends HTMLElement {
       this.callService("select", "select_option", { option: select.value }, { entity_id: control.entityId });
     });
     field.append(name, select);
-    return field;
+    return this.tag(field, control.name, true);
   }
 
   private switchControl(control: SwitchControl): HTMLElement {
@@ -1095,24 +1110,25 @@ class KioskSatelliteCard extends HTMLElement {
       }
     });
     row.append(label, toggle);
-    return row;
+    return this.tag(row, name, true);
   }
 
   private lightSection(model: SatelliteModel): HTMLElement | undefined {
     if (!model.light && model.ambient.length === 0) return undefined;
     const section = this.section("Light", "light");
-    if (model.light) section.append(this.lightControl(model.light));
-    for (const line of model.ambient) section.append(this.sensorLine(line));
+    if (model.light) {
+      for (const part of this.lightParts(model.light)) section.append(part);
+    }
+    for (const line of model.ambient) section.append(this.sensorLine(line, true));
     return section;
   }
 
-  private lightControl(light: LightControl): HTMLElement {
-    const wrap = document.createElement("div");
-    wrap.dataset.light = light.entityId;
-    wrap.append(this.toggleRow(light.entityId, light.name, "light"));
+  private lightParts(light: LightControl): HTMLElement[] {
+    const parts: HTMLElement[] = [this.toggleRow(light.entityId, light.name, "light")];
     const brightness = document.createElement("div");
     brightness.className = "control";
     brightness.dataset.brightnessWrap = light.entityId;
+    brightness.hidden = !showBrightness(light);
     const head = document.createElement("div");
     head.className = "control-head";
     const name = document.createElement("span");
@@ -1123,9 +1139,9 @@ class KioskSatelliteCard extends HTMLElement {
     readout.dataset.format = "number";
     head.append(name, readout);
     brightness.append(head, this.slider(light.entityId, "brightness"));
-    wrap.append(brightness);
+    parts.push(this.tag(brightness, "Brightness", true));
     if (light.effectEntityId) {
-      wrap.append(
+      parts.push(
         this.selectControl({
           entityId: light.effectEntityId,
           name: "Effect",
@@ -1134,22 +1150,24 @@ class KioskSatelliteCard extends HTMLElement {
         }),
       );
     }
-    return wrap;
+    return parts;
   }
 
   private settingsSection(model: SatelliteModel): HTMLElement | undefined {
     if (model.settings.length === 0) return undefined;
     const section = this.section("Settings", "settings");
-    for (const control of model.settings) section.append(this.settingControl(control));
+    for (const control of model.settings) {
+      for (const node of this.settingNodes(control)) section.append(node);
+    }
     return section;
   }
 
-  private settingControl(control: SettingControl): HTMLElement {
-    if (isVolume(control)) return this.volumeControl(control, false);
-    if (isLight(control)) return this.lightControl(control);
-    if (isSelect(control)) return this.selectControl(control);
-    if (isSwitch(control)) return this.switchControl(control);
-    return this.pressButton(control);
+  private settingNodes(control: SettingControl): HTMLElement[] {
+    if (isVolume(control)) return [this.volumeControl(control, false)];
+    if (isLight(control)) return this.lightParts(control);
+    if (isSelect(control)) return [this.selectControl(control)];
+    if (isSwitch(control)) return [this.switchControl(control)];
+    return [this.tag(this.pressButton(control), control.name, true)];
   }
 
   private pressButton(control: ButtonControl): HTMLButtonElement {
@@ -1174,6 +1192,7 @@ class KioskSatelliteCard extends HTMLElement {
     if (model.actions.length > 0) {
       const actions = document.createElement("div");
       actions.className = "actions";
+      this.tag(actions, "", false);
       for (const action of model.actions) actions.append(this.pressButton(action));
       section.append(actions);
     }
@@ -1184,6 +1203,7 @@ class KioskSatelliteCard extends HTMLElement {
       link.target = "_blank";
       link.rel = "noopener noreferrer";
       link.href = model.remoteAdmin;
+      this.tag(link, "Remote admin", false);
       section.append(link);
     }
     if (model.diagnostics.length > 0) {
@@ -1191,8 +1211,9 @@ class KioskSatelliteCard extends HTMLElement {
       const summary = document.createElement("summary");
       summary.textContent = "Diagnostics";
       const body = document.createElement("div");
-      for (const line of model.diagnostics) body.append(this.sensorLine(line));
+      for (const line of model.diagnostics) body.append(this.sensorLine(line, false));
       details.append(summary, body);
+      this.tag(details, "Diagnostics", false);
       section.append(details);
     }
     return section;
@@ -1222,10 +1243,10 @@ class KioskSatelliteCard extends HTMLElement {
       this.callService("update", "install", undefined, { entity_id: update.entityId });
     });
     wrap.append(name, title, installed, latest, install);
-    return wrap;
+    return this.tag(wrap, update.name, false);
   }
 
-  private sensorLine(line: SensorLine): HTMLElement {
+  private sensorLine(line: SensorLine, allowHalf: boolean): HTMLElement {
     const row = document.createElement("div");
     row.className = "line";
     row.dataset.line = line.entityId;
@@ -1237,7 +1258,7 @@ class KioskSatelliteCard extends HTMLElement {
     value.dataset.part = "value";
     value.textContent = sensorValue(line);
     row.append(name, value);
-    return row;
+    return this.tag(row, line.name, allowHalf);
   }
 
   private patch(model: SatelliteModel): void {
@@ -1274,6 +1295,7 @@ class KioskSatelliteCard extends HTMLElement {
       if (ringingNodes) {
         for (const node of ringingNodes) node.hidden = !model.alarms.ringing;
       }
+      this.packAll();
     } finally {
       this.syncing = false;
       queueMicrotask(() => {
@@ -1283,25 +1305,77 @@ class KioskSatelliteCard extends HTMLElement {
   }
 
   private patchMedia(model: SatelliteModel): void {
-    const image = this.piece("picture") as HTMLImageElement | null;
-    if (image) {
-      const picture = model.media.picture;
-      if (picture) {
-        if (image.getAttribute("src") !== picture) image.src = picture;
-        image.hidden = false;
-      } else {
-        image.removeAttribute("src");
-        image.hidden = true;
+    const section = this.shadowRoot?.querySelector<HTMLElement>("[data-section='now-playing']");
+    const playerId = model.media.playerId;
+    const active = Boolean(playerId) && mediaActive(model.media.state);
+    if (section) section.hidden = !active;
+    if (this.mediaCard && this._hass) this.mediaCard.hass = this._hass;
+    if (!section || !playerId || !active) return;
+    void this.mountMediaCard(playerId);
+  }
+
+  private async mountMediaCard(playerId: string): Promise<void> {
+    if (this.mediaCard && this.mediaCardEntity === playerId) {
+      if (this._hass) this.mediaCard.hass = this._hass;
+      return;
+    }
+    const load = cardHelpersLoader();
+    if (!load) {
+      this.dropNowPlaying();
+      return;
+    }
+    const token = ++this.mediaRequest;
+    try {
+      const helpers = await load();
+      const created = await helpers.createCardElement({ type: "media-control", entity: playerId });
+      if (token !== this.mediaRequest || this.model?.media.playerId !== playerId) return;
+      const slot = this.shadowRoot?.querySelector("[data-media-slot]");
+      if (!(slot instanceof HTMLElement) || !slot.isConnected) return;
+      if (this._hass) created.hass = this._hass;
+      slot.replaceChildren(created);
+      if (this._hass) created.hass = this._hass;
+      this.mediaCard = created;
+      this.mediaCardEntity = playerId;
+    } catch {
+      if (token !== this.mediaRequest) return;
+      this.dropNowPlaying();
+    }
+  }
+
+  private dropNowPlaying(): void {
+    this.shadowRoot?.querySelector("[data-section='now-playing']")?.remove();
+    this.mediaCard = undefined;
+    this.mediaCardEntity = undefined;
+  }
+
+  private tag(node: HTMLElement, label: string, allowHalf: boolean): HTMLElement {
+    node.dataset.width = allowHalf && shortLabel(label) ? "half" : "full";
+    return node;
+  }
+
+  private packAll(): void {
+    const sections = this.shadowRoot?.querySelectorAll<HTMLElement>(".section");
+    if (!sections) return;
+    for (const section of sections) this.pack(section);
+  }
+
+  private pack(section: HTMLElement): void {
+    const children = [...section.children].filter((node): node is HTMLElement => node instanceof HTMLElement);
+    for (const node of children) node.classList.remove("half", "full");
+    const visible = children.filter((node) => !node.hidden);
+    let index = 0;
+    while (index < visible.length) {
+      const current = visible[index];
+      const next = visible[index + 1];
+      if (current.dataset.width === "half" && next?.dataset.width === "half") {
+        current.classList.add("half");
+        next.classList.add("half");
+        index += 2;
+        continue;
       }
+      current.classList.add("full");
+      index += 1;
     }
-    this.setText("track", trackLabel(model));
-    const artist = this.piece("artist");
-    if (artist) {
-      artist.textContent = model.media.artist ?? "";
-      artist.hidden = !model.media.artist;
-    }
-    const play = this.piece("play");
-    if (play) play.textContent = model.media.state === "playing" ? "Pause" : "Play";
   }
 
   private patchVolumes(model: SatelliteModel): void {
