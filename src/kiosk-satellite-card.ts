@@ -78,7 +78,7 @@ const DAYS: ReadonlyArray<readonly [string, string]> = [
   ["sun", "Sun"],
 ];
 
-const RELEASE_MARKER = "kiosk-satellite-card@0.1.6";
+const RELEASE_MARKER = "kiosk-satellite-card@0.1.7";
 
 const CONFIG_FORM = {
   schema: [

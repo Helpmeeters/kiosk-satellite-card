@@ -1,15 +1,31 @@
 import { buildModel, parseConfig, type DeviceEntry, type EntityState, type RegistryEntry, type SatelliteModel } from "./model";
 import { buildRedisplay, playerSnapshot, type PlayerSnapshot, type RedisplayView } from "./redisplay";
+import {
+  alarmListFromFailure,
+  alarmListFromPayload,
+  buildRedisplayAlarms,
+  redisplayAlarmServiceCall,
+  redisplayAlarmsCss,
+  renderRedisplayAlarms,
+  type AlarmScriptAction,
+  type AlarmScriptExtra,
+  type RedisplayAlarmList,
+} from "./redisplay-alarms";
+import { agentCss, buildAgent, renderAgent } from "./redisplay-agent";
+import { buildIntercom, intercomCss, renderIntercom } from "./redisplay-intercom";
+import { buildTimers, renderTimers, timersCss } from "./redisplay-timers";
 
 interface Hass {
   states: Record<string, EntityState>;
   devices?: Record<string, { id: string; name?: string | null; name_by_user?: string | null; manufacturer?: string | null }>;
   entities?: Record<string, RegistryEntry & { entity_id?: string }>;
+  services?: Record<string, Record<string, unknown> | undefined>;
   callService: (
     domain: string,
     service: string,
     data?: Record<string, unknown>,
     target?: Record<string, unknown>,
+    returnResponse?: boolean,
   ) => Promise<unknown>;
 }
 
@@ -95,7 +111,6 @@ ha-card {
 .assist,
 .alarm,
 .snoozed,
-.timer,
 .artist,
 .album {
   margin: 2px 0 0;
@@ -224,6 +239,73 @@ button.text {
 .missing p {
   margin: 0;
 }
+.panels {
+  position: relative;
+}
+.panel[data-tab="now"] .missing,
+.panel[data-tab="now"] .face {
+  min-height: 180px;
+}
+.quiet {
+  margin: 0;
+  padding: 36px 16px 28px;
+  color: var(--secondary-text-color);
+  font-size: 1.25rem;
+  line-height: 1.35;
+}
+.panel .rd-alarms {
+  margin-top: 0;
+  border-top: 0;
+  padding-top: 8px;
+}
+.tabs {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 4px;
+  margin: 2px 10px 10px;
+  padding: 6px;
+  border-radius: 22px;
+  background: color-mix(in srgb, var(--primary-text-color) 7%, transparent);
+}
+.tabs button {
+  min-width: 0;
+  min-height: 64px;
+  margin: 0;
+  padding: 8px 2px 6px;
+  border: none;
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  background: transparent;
+  color: var(--secondary-text-color);
+  font: inherit;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1.15;
+  text-align: center;
+  cursor: pointer;
+}
+.tabs button svg {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+}
+.tabs button span {
+  display: block;
+  max-width: 100%;
+}
+.tabs button[aria-selected="true"] {
+  background: var(--primary-color);
+  color: var(--text-primary-color, #fff);
+}
+.tabs button:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: -2px;
+}
 `;
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -244,7 +326,22 @@ const ICONS = {
   next: "M6 18l8.5-6L6 6v12zM16 6v12h2V6z",
   play: "M8 5v14l11-7z",
   pause: "M6 5h4v14H6zm8 0h4v14h-4z",
+  now: "M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z",
+  alarms: "M12 22a2 2 0 0 0 2-2h-4a2 2 0 0 0 2 2zm6-6V11a7 7 0 0 0-5-6.71V4a2 2 0 1 0-4 0v.29A7 7 0 0 0 6 11v5l-2 2v1h16v-1l-2-2z",
+  timers: "M9 1h6v2H9V1zm3 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zm1-13h-2v6l4.2 2.5.9-1.4-3.1-1.8V7z",
+  intercom: "M6.6 10.8a15 15 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.25 12 12 0 0 0 3.6.55 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1 12 12 0 0 0 .55 3.6 1 1 0 0 1-.25 1L6.6 10.8z",
+  agent: "M3 9v6h4l5 5V4L7 9H3zm13.5 3a5 5 0 0 1-2.5 4.03V7.97A5 5 0 0 1 16.5 12zM14 3.23v2.06A7 7 0 0 1 19 12a7 7 0 0 1-5 6.71v2.06A9 9 0 0 0 21 12a9 9 0 0 0-7-8.77z",
 };
+
+const TABS = [
+  { id: "now", label: "Now playing", icon: ICONS.now },
+  { id: "alarms", label: "Alarms", icon: ICONS.alarms },
+  { id: "timers", label: "Timers", icon: ICONS.timers },
+  { id: "intercom", label: "Intercom", icon: ICONS.intercom },
+  { id: "agent", label: "Voice Agent", icon: ICONS.agent },
+] as const;
+
+type TabId = (typeof TABS)[number]["id"];
 
 function devicesFrom(hass: Hass): DeviceEntry[] {
   if (!hass.devices) return [];
@@ -254,6 +351,10 @@ function devicesFrom(hass: Hass): DeviceEntry[] {
 function entitiesFrom(hass: Hass): RegistryEntry[] {
   if (!hass.entities) return [];
   return Object.entries(hass.entities).map(([key, entry]) => ({ ...entry, entity_id: entry.entity_id || key }));
+}
+
+function alarmScriptAvailable(hass: Hass): boolean {
+  return Boolean(hass.services?.script?.kiosk_satellite_alarms) || Boolean(hass.states?.["script.kiosk_satellite_alarms"]);
 }
 
 function faceSignature(view: RedisplayView): string {
@@ -269,6 +370,13 @@ class KioskRedisplay extends HTMLElement {
   private player?: PlayerSnapshot;
   private view?: RedisplayView;
   private signature?: string;
+  private boundDevice?: string;
+  private tab: TabId = "now";
+  private alarmList?: RedisplayAlarmList;
+  private alarmsPresence?: "view" | "empty";
+  private timersKey?: string;
+  private intercomKey?: string;
+  private agentKey?: string;
   private dragging = false;
   private clock = 0;
   private readonly endDrag = (): void => {
@@ -335,22 +443,41 @@ class KioskRedisplay extends HTMLElement {
 
   private renderCard(): void {
     if (!this.shadowRoot || !this.deviceId || !this._hass) return;
+    const deviceChanged = this.boundDevice !== this.deviceId;
+    if (deviceChanged) {
+      this.boundDevice = this.deviceId;
+      this.alarmList = undefined;
+      this.alarmsPresence = undefined;
+      this.timersKey = undefined;
+      this.intercomKey = undefined;
+      this.agentKey = undefined;
+      this.signature = undefined;
+    }
     this.model = buildModel({
       deviceId: this.deviceId,
       devices: devicesFrom(this._hass),
       entities: entitiesFrom(this._hass),
       states: this._hass.states ?? {},
+      alarmScript: alarmScriptAvailable(this._hass),
     });
     const playerId = this.model.media.playerId;
     this.player = playerSnapshot(playerId ? this._hass.states[playerId] : undefined);
     const view = buildRedisplay(this.model, this.player, Date.now());
     this.view = view;
+    this.ensureShell();
+    if (deviceChanged) this.clearPanels();
     const signature = faceSignature(view);
-    if (this.signature !== signature || !this.shadowRoot.querySelector("ha-card")) {
+    if (this.signature !== signature) {
       this.signature = signature;
-      this.build(view);
+      const now = this.piece("panel-now");
+      if (now) now.replaceChildren(view.missing ? this.missing(view) : this.face(view));
     }
     this.paint(view);
+    this.paintAlarms();
+    this.paintTimers();
+    this.paintIntercom();
+    this.paintAgent();
+    this.showTab(this.tab);
   }
 
   private advanceProgress(): void {
@@ -360,20 +487,68 @@ class KioskRedisplay extends HTMLElement {
     this.paintProgress(view);
   }
 
-  private build(view: RedisplayView): void {
+  private ensureShell(): void {
     const root = this.shadowRoot;
-    if (!root) return;
-    let style = root.querySelector("style");
-    if (!style) {
-      style = document.createElement("style");
-      style.textContent = CSS;
-      root.append(style);
-    }
-    root.querySelector("ha-card")?.remove();
+    if (!root || root.querySelector("ha-card")) return;
+    const style = document.createElement("style");
+    style.textContent = CSS + redisplayAlarmsCss + timersCss + intercomCss + agentCss;
     const card = document.createElement("ha-card");
     card.dataset.card = "kiosk-redisplay";
-    card.append(view.missing ? this.missing(view) : this.face(view));
-    root.append(card);
+    const panels = document.createElement("div");
+    panels.className = "panels";
+    for (const tab of TABS) {
+      const panel = document.createElement("div");
+      panel.className = "panel";
+      panel.dataset.part = `panel-${tab.id}`;
+      panel.dataset.tab = tab.id;
+      panel.id = `rd-panel-${tab.id}`;
+      panel.setAttribute("role", "tabpanel");
+      panel.setAttribute("aria-label", tab.label);
+      panels.append(panel);
+    }
+    const nav = document.createElement("nav");
+    nav.className = "tabs";
+    nav.setAttribute("role", "tablist");
+    nav.setAttribute("aria-label", "Kiosk Redisplay");
+    for (const tab of TABS) nav.append(this.tabButton(tab));
+    card.append(panels, nav);
+    root.append(style, card);
+  }
+
+  private tabButton(tab: (typeof TABS)[number]): HTMLButtonElement {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "tab";
+    button.dataset.tab = tab.id;
+    button.setAttribute("role", "tab");
+    button.setAttribute("aria-controls", `rd-panel-${tab.id}`);
+    button.setAttribute("aria-label", tab.label);
+    const label = document.createElement("span");
+    label.textContent = tab.label;
+    button.append(icon(tab.icon), label);
+    button.addEventListener("click", () => this.showTab(tab.id));
+    return button;
+  }
+
+  private showTab(id: TabId): void {
+    this.tab = id;
+    for (const tab of TABS) {
+      const panel = this.piece(`panel-${tab.id}`);
+      if (panel) panel.hidden = tab.id !== id;
+      const button = this.shadowRoot?.querySelector(`.tabs button[data-tab="${tab.id}"]`);
+      if (button instanceof HTMLButtonElement) {
+        const selected = tab.id === id;
+        button.setAttribute("aria-selected", selected ? "true" : "false");
+        button.tabIndex = selected ? 0 : -1;
+      }
+    }
+  }
+
+  private clearPanels(): void {
+    for (const tab of TABS) {
+      if (tab.id === "now") continue;
+      this.piece(`panel-${tab.id}`)?.replaceChildren();
+    }
   }
 
   private missing(view: RedisplayView): HTMLElement {
@@ -479,10 +654,6 @@ class KioskRedisplay extends HTMLElement {
 
     wrap.append(wash, scrim, status, banner, art, placeholder, title, artist, album, progress, transport);
     if (view.volume) wrap.append(this.volumeControl(view));
-    const timer = document.createElement("p");
-    timer.className = "timer";
-    timer.dataset.part = "timer";
-    wrap.append(timer);
     return wrap;
   }
 
@@ -580,8 +751,6 @@ class KioskRedisplay extends HTMLElement {
     this.paintProgress(view);
     this.paintPlay(view);
     this.paintVolume(view);
-    this.setText("timer", view.timer ?? "");
-    this.hide("timer", !view.timer);
   }
 
   private paintArt(view: RedisplayView): void {
@@ -662,6 +831,111 @@ class KioskRedisplay extends HTMLElement {
     void hass.callService(domain, service, data, target).catch(() => undefined);
   }
 
+  private paintAlarms(): void {
+    const host = this.piece("panel-alarms");
+    const model = this.model;
+    if (!host || !model) return;
+    const view = buildRedisplayAlarms(model, this.alarmList);
+    if (!view) {
+      if (this.alarmsPresence !== "empty") {
+        this.alarmsPresence = "empty";
+        host.replaceChildren(this.quiet("No alarms"));
+      }
+      return;
+    }
+    this.alarmsPresence = "view";
+    renderRedisplayAlarms(host, view, {
+      onPress: (entityId) => this.call("button", "press", undefined, { entity_id: entityId }),
+      onScript: (action, extra) => this.runAlarmScript(action, extra),
+      onError: (message) => {
+        const next: RedisplayAlarmList = { error: message };
+        if (this.alarmList?.alarms) next.alarms = this.alarmList.alarms;
+        this.alarmList = next;
+      },
+    });
+  }
+
+  private runAlarmScript(action: AlarmScriptAction, extra?: AlarmScriptExtra): void {
+    const hass = this._hass;
+    const kioskName = this.model?.alarms.kioskName;
+    const device = this.deviceId;
+    if (!hass || !kioskName || !device) return;
+    const call = redisplayAlarmServiceCall(kioskName, action, extra);
+    void hass
+      .callService(call.domain, call.service, call.data, undefined, true)
+      .then(
+        (result) => {
+          if (this.deviceId !== device) return;
+          this.alarmList = alarmListFromPayload(result, this.alarmList);
+          this.paintAlarms();
+        },
+        (error: unknown) => {
+          if (this.deviceId !== device) return;
+          this.alarmList = alarmListFromFailure(error, this.alarmList);
+          this.paintAlarms();
+        },
+      );
+  }
+
+  private paintTimers(): void {
+    const host = this.piece("panel-timers");
+    const model = this.model;
+    if (!host || !model) return;
+    const view = buildTimers(model);
+    const key = view ? JSON.stringify(view) : "";
+    if (key === this.timersKey) return;
+    this.timersKey = key;
+    if (!view) {
+      host.replaceChildren(this.quiet("No timers"));
+      return;
+    }
+    renderTimers(host, view, (entityId, on) => {
+      this.call("switch", on ? "turn_on" : "turn_off", undefined, { entity_id: entityId });
+    });
+  }
+
+  private paintIntercom(): void {
+    const host = this.piece("panel-intercom");
+    const model = this.model;
+    if (!host || !model) return;
+    const view = buildIntercom(model);
+    const key = view ? JSON.stringify(view) : "";
+    if (key === this.intercomKey) return;
+    this.intercomKey = key;
+    if (!view) {
+      host.replaceChildren(this.quiet("No intercom switches"));
+      return;
+    }
+    renderIntercom(host, view, (domain, service, data, target) => {
+      this.call(domain, service, data, target);
+    });
+  }
+
+  private paintAgent(): void {
+    const host = this.piece("panel-agent");
+    const model = this.model;
+    if (!host || !model) return;
+    const view = buildAgent(model);
+    if (!view) {
+      if (this.agentKey !== "") {
+        this.agentKey = "";
+        host.replaceChildren(this.quiet("No voice agent settings"));
+      }
+      return;
+    }
+    this.agentKey = "view";
+    renderAgent(host, view, (domain, service, data, target) => {
+      this.call(domain, service, data, target);
+    });
+  }
+
+  private quiet(text: string): HTMLElement {
+    const note = document.createElement("p");
+    note.className = "quiet";
+    note.textContent = text;
+    return note;
+  }
+
   private piece(name: string): HTMLElement | null {
     const node = this.shadowRoot?.querySelector(`[data-part="${name}"]`);
     return node instanceof HTMLElement ? node : null;
@@ -688,7 +962,7 @@ if (!cardWindow.customCards.some((card) => card.type === "kiosk-redisplay")) {
   cardWindow.customCards.push({
     type: "kiosk-redisplay",
     name: "Kiosk Redisplay",
-    description: "A display for an audio-only Kiosk Satellite.",
+    description: "Now playing, alarms, timers, intercom, and voice agent for an audio-only Kiosk Satellite.",
     preview: true,
   });
 }

@@ -54,7 +54,9 @@ type: custom:kiosk-redisplay
 device: a78b06196d065fff7a9bf5c7331e0e5e
 ```
 
-The device picker matches the control card. Previous, play, pause, and next call the paired player. Favorite, snooze, and stop press that device's buttons. The volume slider writes the device's Media volume. When that entity is absent, the slider writes the player's volume. A next timer, or a timer count when nothing is scheduled, sits under the controls. Progress advances from the player's reported position while it is playing.
+The device picker matches the control card. Previous, play, pause, and next call the paired player. Favorite, snooze, and stop press that device's buttons. The volume slider writes the device's Media volume. When that entity is absent, the slider writes the player's volume. Progress advances from the player's reported position while it is playing.
+
+Five icon tabs stay on the card: Now playing, Alarms, Timers, Intercom, and Voice Agent. The selected tab stays put while Home Assistant updates. Now playing is the artwork and transport. Alarms shows the next alarm, Snooze and Stop while one is ringing, and the alarm list when `script.kiosk_satellite_alarms` answers. Timers shows the next timer, the count, or "No timers", and Mute timers when timer sensors exist. Intercom shows Intercom enabled and Intercom do not disturb. Voice Agent shows the wake word and assistant selects, or "No voice agent settings" when the device has none. A tab stays even when that device has nothing to show there.
 
 ## Install
 
