@@ -15,6 +15,7 @@ import {
   type UpdateControl,
   type VolumeControl,
 } from "./model";
+import { batteryFillWidth, batteryMark } from "./battery";
 import { spansFullWidth, type ColumnRole } from "./layout";
 
 interface Hass {
@@ -162,7 +163,49 @@ ha-card {
   margin: 0;
   font-size: 1.25rem;
   font-weight: 500;
+  line-height: 1.2;
   color: var(--primary-text-color);
+}
+.title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+}
+.title-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+.title-copy .muted {
+  font-size: 0.85rem;
+  line-height: 1.25;
+}
+.battery {
+  flex: 0 0 auto;
+  margin-top: 5px;
+  color: var(--primary-text-color);
+  line-height: 0;
+  pointer-events: none;
+}
+.battery.is-low {
+  color: var(--error-color);
+}
+.battery svg {
+  display: block;
+  width: 25px;
+  height: 12px;
+}
+.battery-fill {
+  fill: currentColor;
+}
+.battery-bolt {
+  fill: var(--ha-card-background, var(--card-background-color, Canvas));
+  stroke: currentColor;
+  stroke-width: 0.6;
+  stroke-linejoin: round;
 }
 .muted {
   margin: 0;
@@ -412,6 +455,39 @@ function buttonSubtitle(model: SatelliteModel): string {
 
 function mediaActive(state: string | undefined): boolean {
   return state === "playing" || state === "paused" || state === "buffering";
+}
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+function svgRect(attrs: Record<string, string>): SVGRectElement {
+  const node = document.createElementNS(SVG_NS, "rect");
+  for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
+  return node;
+}
+
+function batteryIcon(): SVGSVGElement {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("viewBox", "0 0 28 14");
+  svg.setAttribute("aria-hidden", "true");
+  const bolt = document.createElementNS(SVG_NS, "path");
+  bolt.setAttribute("class", "battery-bolt");
+  bolt.setAttribute("d", "M14.15 2.8 10.7 7.5h2.15l-1.05 3.7 4.55-5.2h-2.25z");
+  svg.append(
+    svgRect({
+      x: "0.8",
+      y: "0.8",
+      width: "22.2",
+      height: "12.4",
+      rx: "2.4",
+      fill: "none",
+      stroke: "currentColor",
+      "stroke-width": "1.4",
+    }),
+    svgRect({ x: "24.2", y: "4.4", width: "2.2", height: "5.2", rx: "0.8", fill: "currentColor" }),
+    svgRect({ x: "2.4", y: "2.5", width: "0", height: "9", rx: "1.1", class: "battery-fill" }),
+    bolt,
+  );
+  return svg;
 }
 
 function showBrightness(light: LightControl): boolean {
@@ -810,16 +886,29 @@ class KioskSatelliteCard extends HTMLElement {
 
   private headerSection(): HTMLElement {
     const section = this.section(undefined, "header");
+    const row = document.createElement("div");
+    row.className = "title-row";
+    this.place(row, "device-name");
+
+    const copy = document.createElement("div");
+    copy.className = "title-copy";
     const name = document.createElement("h2");
     name.className = "device-name";
     name.dataset.part = "title";
-    this.place(name, "device-name");
     const assist = document.createElement("p");
     assist.className = "muted";
     assist.dataset.part = "assist";
-    this.place(assist, "header-status");
-    section.append(name, assist);
-    for (const line of this.model?.header ?? []) section.append(this.sensorLine(line, "header-status"));
+    copy.append(name, assist);
+
+    const battery = document.createElement("div");
+    battery.className = "battery";
+    battery.dataset.part = "battery";
+    battery.setAttribute("role", "img");
+    battery.hidden = true;
+    battery.append(batteryIcon());
+
+    row.append(copy, battery);
+    section.append(row);
     return section;
   }
 
@@ -1265,7 +1354,7 @@ class KioskSatelliteCard extends HTMLElement {
         assist.textContent = model.assistState ?? "";
         assist.hidden = !model.assistState;
       }
-      this.patchLines(model.header);
+      this.patchBattery(model);
       this.patchLines(model.timers);
       this.patchLines(model.ambient);
       this.patchLines(model.diagnostics);
@@ -1528,6 +1617,27 @@ class KioskSatelliteCard extends HTMLElement {
     } else {
       link.hidden = true;
     }
+  }
+
+  private patchBattery(model: SatelliteModel): void {
+    const node = this.piece("battery");
+    if (!node) return;
+    const mark = batteryMark(model.header);
+    node.hidden = !mark;
+    if (!mark) {
+      node.removeAttribute("aria-label");
+      return;
+    }
+    node.classList.toggle("is-low", mark.low);
+    node.setAttribute("aria-label", mark.label);
+    const fill = node.querySelector(".battery-fill");
+    if (fill) {
+      const width = batteryFillWidth(mark.percent);
+      fill.setAttribute("width", width.toFixed(2));
+      (fill as SVGElement).style.display = width <= 0 ? "none" : "";
+    }
+    const bolt = node.querySelector(".battery-bolt");
+    if (bolt) (bolt as SVGElement).style.display = mark.charging ? "" : "none";
   }
 
   private patchLines(lines: SensorLine[]): void {
