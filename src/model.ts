@@ -627,6 +627,14 @@ function entityKnown(
   return entities.some((entry) => entry.entity_id === entityId);
 }
 
+/**
+ * The Now Playing section uses Home Assistant's media-control card whenever a
+ * paired player exists. Idle, off, unknown, and unavailable still show it.
+ */
+export function showNowPlaying(playerId: string | undefined, _state: string | undefined): boolean {
+  return Boolean(playerId);
+}
+
 function buildMedia(
   assistEntityId: string | undefined,
   entities: readonly RegistryEntry[],

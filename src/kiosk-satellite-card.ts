@@ -2,6 +2,7 @@ import {
   alarmServiceCall,
   buildModel,
   parseConfig,
+  showNowPlaying,
   type ButtonControl,
   type CardConfig,
   type DeviceEntry,
@@ -76,7 +77,7 @@ const DAYS: ReadonlyArray<readonly [string, string]> = [
   ["sun", "Sun"],
 ];
 
-const RELEASE_MARKER = "kiosk-satellite-card@0.1.4";
+const RELEASE_MARKER = "kiosk-satellite-card@0.1.5";
 
 const CONFIG_FORM = {
   schema: [
@@ -514,10 +515,6 @@ function buttonSubtitle(model: SatelliteModel): string {
   const alarm = shortAlarmTime(model.alarms.nextAlarm);
   if (primary && alarm) return `${primary} · ${alarm}`;
   return primary || alarm || "";
-}
-
-function mediaActive(state: string | undefined): boolean {
-  return state === "playing" || state === "paused" || state === "buffering";
 }
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -989,9 +986,8 @@ class KioskSatelliteCard extends HTMLElement {
 
   private nowPlayingSection(model: SatelliteModel): HTMLElement | undefined {
     const playerId = model.media.playerId;
-    if (!playerId || !cardHelpersLoader()) return undefined;
+    if (!showNowPlaying(playerId, model.media.state) || !cardHelpersLoader()) return undefined;
     const section = this.section(undefined, "now-playing");
-    section.hidden = !mediaActive(model.media.state);
     const block = document.createElement("div");
     block.className = "media-block";
     this.place(block, "media");
@@ -1468,10 +1464,10 @@ class KioskSatelliteCard extends HTMLElement {
   private patchMedia(model: SatelliteModel): void {
     const section = this.shadowRoot?.querySelector<HTMLElement>("[data-section='now-playing']");
     const playerId = model.media.playerId;
-    const active = Boolean(playerId) && mediaActive(model.media.state);
-    if (section) section.hidden = !active;
+    const visible = showNowPlaying(playerId, model.media.state);
+    if (section) section.hidden = !visible;
     if (this.mediaCard && this._hass) this.mediaCard.hass = this._hass;
-    if (!section || !playerId || !active) return;
+    if (!section || !visible || !playerId) return;
     void this.mountMediaCard(playerId);
   }
 
