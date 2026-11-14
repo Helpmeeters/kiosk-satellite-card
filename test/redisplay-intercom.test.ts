@@ -288,6 +288,7 @@ describe("intercomCss", () => {
       assert.match(selector.trim(), /^\.rd-intercom/);
     }
     assert.equal(intercomCss.includes("grid-template-columns"), false);
+    assert.match(intercomCss, /\.rd-intercom\s*\{[^}]*padding:\s*16px 16px 18px;/);
     for (const token of ["--primary-text-color", "--secondary-text-color", "--primary-color"]) {
       assert.equal(intercomCss.includes(`var(${token})`), true);
     }

@@ -65,7 +65,7 @@ export const timersCss = `
   flex-direction: column;
   align-items: flex-start;
   gap: 8px;
-  padding: 20px 2px 8px;
+  padding: 16px 16px 18px;
   color: var(--primary-text-color);
 }
 .rd-timers-label,

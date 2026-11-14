@@ -222,6 +222,7 @@ describe("timersCss", () => {
     assert.ok(classNames.length > 0);
     assert.ok(classNames.every((name) => name.startsWith("rd-timers")));
     assert.match(timersCss, /\.rd-timers\s*\{[^}]*display:\s*flex/);
+    assert.match(timersCss, /\.rd-timers\s*\{[^}]*padding:\s*16px 16px 18px/);
     assert.match(timersCss, /\.rd-timers-headline\s*\{[^}]*font-size:\s*2\.4rem/);
     assert.match(timersCss, /var\(--primary-text-color\)/);
     assert.match(timersCss, /var\(--secondary-text-color\)/);

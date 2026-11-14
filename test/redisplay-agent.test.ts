@@ -48,10 +48,15 @@ class DomNode {
   value = "";
   dataset: Record<string, string> = {};
   children: DomNode[] = [];
+  owner: { activeElement: DomNode | null } | null = null;
   private readonly attrs = new Map<string, string>();
   private readonly listeners = new Map<string, Array<() => void>>();
 
   constructor(readonly tagName: string) {}
+
+  getRootNode(): { activeElement: DomNode | null } | DomNode {
+    return this.owner ?? this;
+  }
 
   setAttribute(name: string, value: string): void {
     this.attrs.set(name, value);
@@ -245,15 +250,19 @@ describe("agentCss", () => {
     for (const selector of selectors) {
       assert.match(selector.trim(), /^\.rd-agent/);
     }
-    assert.equal(agentCss.includes("grid-template-columns"), false);
     assert.match(agentCss, /\.rd-agent\s*\{[^}]*display:\s*flex/);
-    assert.match(agentCss, /\.rd-agent-select\s*\{[^}]*font-size:\s*2rem/);
+    assert.match(agentCss, /\.rd-agent\s*\{[^}]*padding:\s*16px 16px 18px/);
+    assert.match(agentCss, /\.rd-agent-row\s*\{[^}]*grid-template-columns:\s*1fr 1fr/);
+    assert.match(agentCss, /\.rd-agent-row-single\s*\{[^}]*grid-template-columns:\s*1fr/);
+    assert.match(agentCss, /\.rd-agent-select\s*\{[^}]*font-size:\s*1\.15rem/);
     for (const token of ["--primary-text-color", "--secondary-text-color", "--primary-color", "--divider-color"]) {
       assert.equal(agentCss.includes(`var(${token})`), true);
     }
     for (const className of [
       "rd-agent",
       "rd-agent-label",
+      "rd-agent-row",
+      "rd-agent-row-single",
       "rd-agent-field",
       "rd-agent-name",
       "rd-agent-control",
@@ -269,11 +278,15 @@ describe("renderAgent", () => {
   const previousDocument = (globalThis as { document?: unknown }).document;
   const hadDocument = "document" in globalThis;
 
-  (globalThis as { document: { createElement(tag: string): DomNode } }).document = {
-    createElement(tag: string) {
-      return new DomNode(tag);
+  const agentDocument = {
+    activeElement: null as DomNode | null,
+    createElement(tag: string): DomNode {
+      const node = new DomNode(tag);
+      node.owner = agentDocument;
+      return node;
     },
   };
+  (globalThis as { document: typeof agentDocument }).document = agentDocument;
 
   after(() => {
     if (hadDocument) {
@@ -312,7 +325,7 @@ describe("renderAgent", () => {
     assert.equal(parent.children.length, 0);
   });
 
-  it("shows Voice Agent as a stack of large selects", () => {
+  it("shows Voice Agent as paired rows of selects", () => {
     const parent = mount(sample());
     const section = parent.querySelector(".rd-agent");
     assert.equal(section?.tagName, "section");
@@ -321,6 +334,13 @@ describe("renderAgent", () => {
     assert.equal(parent.querySelector(".rd-agent-label")?.textContent, "Voice Agent");
     assert.equal(classNames(parent).every((name) => name.startsWith("rd-agent")), true);
     assert.equal(parent.children.length, 1);
+
+    const rows = parent.querySelectorAll(".rd-agent-row");
+    assert.deepEqual(
+      rows.map((row) => row.querySelectorAll(".rd-agent-name").map((node) => node.textContent)),
+      [["Wake word"], ["Assistant"], ["Wake word sensitivity"]],
+    );
+    assert.equal(rows.some((row) => row.className.includes("rd-agent-row-single")), false);
 
     const selects = parent.querySelectorAll(".rd-agent-select");
     assert.deepEqual(
@@ -383,28 +403,74 @@ describe("renderAgent", () => {
     assert.deepEqual(later[1], ["select", "select_option", { option: "0.8" }, { entity_id: "select.sensitivity" }]);
   });
 
-  it("keeps an open select while the view is unchanged, then applies a new value", () => {
+  it("groups wake words, assistants, finished speaking, and the engine", () => {
+    const parent = mount(
+      buildAgent(
+        satellite({
+          voiceSelects: [
+            select("select.sensitivity", "VS Wake word sensitivity", ["0.5", "0.8"], "0.5"),
+            select("select.wake2", "  Wake word 2  ", ["Hey Mycroft"], "Hey Mycroft"),
+            select("select.finished", "Finished speaking detection", ["Silence", "VAD"], "Silence"),
+            select("select.engine", "Wake word engine", ["openWakeWord", "microWakeWord"], "openWakeWord"),
+            select("select.assistant2", "Assistant 2", ["Cloud"], "Cloud"),
+            select("select.assistant", "Assistant", ["Home"], "Home"),
+            select("select.wake", "Wake word", ["Hey Jarvis", "Hey Mycroft"], "Hey Jarvis"),
+          ],
+        }),
+      ),
+    );
+    const rows = parent.querySelectorAll(".rd-agent-row");
+    assert.deepEqual(
+      rows.map((row) => row.querySelectorAll(".rd-agent-name").map((node) => node.textContent)),
+      [
+        ["Wake word", "  Wake word 2  "],
+        ["Assistant", "Assistant 2"],
+        ["Finished speaking detection"],
+        ["Wake word engine", "VS Wake word sensitivity"],
+      ],
+    );
+    assert.equal(rows[2]?.className.includes("rd-agent-row-single"), true);
+    assert.equal(rows[0]?.className.includes("rd-agent-row-single"), false);
+    assert.equal(rows[3]?.className.includes("rd-agent-row-single"), false);
+  });
+
+  it("keeps an open select through a re-render and updates the others", () => {
     const calls: string[] = [];
     const parent = mount(sample(), (_domain, _service, data) => calls.push(data.option));
-    const first = parent.querySelector(".rd-agent-select");
-    renderAgent(parent as unknown as HTMLElement, sample(), (_domain, _service, data) => calls.push(data.option));
-    assert.equal(parent.querySelector(".rd-agent-select"), first);
-    assert.deepEqual(calls, []);
+    const selects = parent.querySelectorAll(".rd-agent-select");
+    const wake = selects[0];
+    const assistant = selects[1];
+    const sensitivity = selects[2];
+    assert.ok(wake && assistant && sensitivity);
+    const wakeOption = optionNodes(wake)[0];
+    wake.value = "Hey Mycroft";
+    agentDocument.activeElement = wake;
 
     const next = buildAgent(
       satellite({
         voiceSelects: [
-          select("select.wake", "Wake word", ["Hey Jarvis", "Hey Mycroft"], "Hey Mycroft"),
-          select("select.assistant", "Assistant", [], "Qwen"),
+          select("select.wake", "Wake word", ["Hey Jarvis", "Hey Mycroft", "Alexa"], "Hey Jarvis"),
+          select("select.assistant", "Assistant", ["Home"], "Home"),
           select("select.sensitivity", "Wake word sensitivity", ["0.5", "0.8"], "0.8"),
         ],
       }),
     );
     renderAgent(parent as unknown as HTMLElement, next, () => undefined);
-    const selects = parent.querySelectorAll(".rd-agent-select");
-    assert.notEqual(selects[0], first);
-    assert.equal(selects[0]?.value, "Hey Mycroft");
-    assert.equal(selects[2]?.value, "0.8");
+    assert.equal(parent.querySelectorAll(".rd-agent-select")[0], wake);
+    assert.equal(optionNodes(wake)[0], wakeOption);
+    assert.equal(wake.value, "Hey Mycroft");
+    assert.equal(assistant.value, "Home");
+    assert.equal(sensitivity.value, "0.8");
+    assert.deepEqual(calls, []);
+
+    agentDocument.activeElement = null;
+    renderAgent(parent as unknown as HTMLElement, next, () => undefined);
+    assert.equal(parent.querySelectorAll(".rd-agent-select")[0], wake);
+    assert.equal(wake.value, "Hey Jarvis");
+    assert.deepEqual(
+      optionNodes(wake).map((node) => node.value),
+      ["Hey Jarvis", "Hey Mycroft", "Alexa"],
+    );
     assert.deepEqual(calls, []);
   });
 });

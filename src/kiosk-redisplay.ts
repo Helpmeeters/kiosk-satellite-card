@@ -93,8 +93,8 @@ ha-card {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 16px 16px 18px;
+  gap: 10px;
+  padding: 0;
 }
 .status {
   display: flex;
@@ -142,11 +142,15 @@ ha-card {
   display: flex;
   gap: 8px;
 }
+.stage {
+  display: flow-root;
+}
 .art,
 .placeholder {
-  width: min(72%, 280px);
-  aspect-ratio: 1;
-  margin: 4px auto 0;
+  float: left;
+  width: 112px;
+  height: 112px;
+  margin: 0 14px 8px 0;
   border-radius: 12px;
   background: color-mix(in srgb, var(--primary-text-color) 8%, transparent);
 }
@@ -155,8 +159,8 @@ ha-card {
   display: block;
 }
 .title {
-  margin: 4px 0 0;
-  font-size: 1.6rem;
+  margin: 0;
+  font-size: 1.25rem;
   font-weight: 500;
   line-height: 1.15;
 }
@@ -182,9 +186,23 @@ ha-card {
 }
 .transport {
   display: flex;
-  justify-content: center;
+  justify-content: flex-start;
   align-items: center;
-  gap: 16px;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.transport button.icon {
+  width: 40px;
+  height: 40px;
+}
+.transport button.icon.primary {
+  width: 48px;
+  height: 48px;
+}
+.transport button.icon svg {
+  width: 20px;
+  height: 20px;
 }
 button {
   border: none;
@@ -225,6 +243,8 @@ button.text {
   grid-template-columns: auto 1fr auto;
   gap: 10px;
   align-items: center;
+  clear: both;
+  margin-top: 4px;
 }
 .volume input {
   width: 100%;
@@ -242,21 +262,23 @@ button.text {
 .panels {
   position: relative;
 }
-.panel[data-tab="now"] .missing,
-.panel[data-tab="now"] .face {
-  min-height: 180px;
+.panel {
+  padding: 16px 16px 12px;
 }
 .quiet {
   margin: 0;
-  padding: 36px 16px 28px;
+  padding: 0;
   color: var(--secondary-text-color);
   font-size: 1.25rem;
   line-height: 1.35;
 }
-.panel .rd-alarms {
-  margin-top: 0;
+.panel > .rd-alarms,
+.panel > .rd-timers,
+.panel > .rd-intercom,
+.panel > .rd-agent {
+  margin: 0;
+  padding: 0;
   border-top: 0;
-  padding-top: 8px;
 }
 .tabs {
   display: grid;
@@ -652,8 +674,11 @@ class KioskRedisplay extends HTMLElement {
       if (view.favoriteId) transport.append(this.textButton("Favorite", () => this.press(this.view?.favoriteId)));
     }
 
-    wrap.append(wash, scrim, status, banner, art, placeholder, title, artist, album, progress, transport);
-    if (view.volume) wrap.append(this.volumeControl(view));
+    const stage = document.createElement("div");
+    stage.className = "stage";
+    stage.append(art, placeholder, title, artist, album, progress, transport);
+    if (view.volume) stage.append(this.volumeControl(view));
+    wrap.append(wash, scrim, status, banner, stage);
     return wrap;
   }
 
@@ -846,7 +871,7 @@ class KioskRedisplay extends HTMLElement {
     this.alarmsPresence = "view";
     renderRedisplayAlarms(host, view, {
       onPress: (entityId) => this.call("button", "press", undefined, { entity_id: entityId }),
-      onScript: (action, extra) => this.runAlarmScript(action, extra),
+      onScript: (action, extra) => this.runAlarmScript(view.kioskName, action, extra),
       onError: (message) => {
         const next: RedisplayAlarmList = { error: message };
         if (this.alarmList?.alarms) next.alarms = this.alarmList.alarms;
@@ -855,9 +880,8 @@ class KioskRedisplay extends HTMLElement {
     });
   }
 
-  private runAlarmScript(action: AlarmScriptAction, extra?: AlarmScriptExtra): void {
+  private runAlarmScript(kioskName: string, action: AlarmScriptAction, extra?: AlarmScriptExtra): void {
     const hass = this._hass;
-    const kioskName = this.model?.alarms.kioskName;
     const device = this.deviceId;
     if (!hass || !kioskName || !device) return;
     const call = redisplayAlarmServiceCall(kioskName, action, extra);

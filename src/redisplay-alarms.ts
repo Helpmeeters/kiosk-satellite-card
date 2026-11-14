@@ -32,6 +32,8 @@ export interface RedisplayAlarmItem {
   /** Weekdays and On/Off. */
   detail: string;
   action: "turn_on" | "turn_off";
+  /** True for the alarm that matches the next-alarm sensor. That row is first. */
+  next: boolean;
 }
 
 export interface RedisplayAlarmsView {
@@ -81,7 +83,7 @@ export const redisplayAlarmsCss = `
   flex-direction: column;
   gap: 14px;
   margin-top: 8px;
-  padding-top: 16px;
+  padding: 16px 16px 18px;
   border-top: 1px solid var(--divider-color, rgba(127, 127, 127, 0.35));
   color: var(--primary-text-color);
 }
@@ -156,11 +158,63 @@ export const redisplayAlarmsCss = `
   flex-direction: column;
   gap: 16px;
 }
+.rd-alarms-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.rd-alarms-rows:empty {
+  display: none;
+}
 .rd-alarms-item {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 6px;
+}
+.rd-alarms-item-next .rd-alarms-item-time {
+  font-size: 1.6rem;
+}
+.rd-alarms-add {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 52px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--secondary-text-color);
+  font: inherit;
+  font-size: 1.35rem;
+  font-weight: 500;
+  line-height: 1.15;
+  text-align: left;
+  cursor: pointer;
+}
+.rd-alarms-dialog {
+  width: min(280px, calc(100% - 32px));
+  max-width: 280px;
+  padding: 16px;
+  border: none;
+  border-radius: 16px;
+  background: var(--ha-card-background, var(--card-background-color));
+  color: var(--primary-text-color);
+}
+.rd-alarms-dialog:not([hidden]) {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 20;
+  transform: translate(-50%, -50%);
+}
+.rd-alarms-dialog::backdrop {
+  background: color-mix(in srgb, var(--primary-text-color) 32%, transparent);
+}
+.rd-alarms-dialog-title {
+  margin: 0 0 4px;
+  font-size: 1.05rem;
+  font-weight: 500;
 }
 .rd-alarms-item-time {
   margin: 0;
@@ -168,11 +222,6 @@ export const redisplayAlarmsCss = `
   font-weight: 500;
   line-height: 1.15;
   font-variant-numeric: tabular-nums;
-}
-.rd-alarms-form {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
 }
 .rd-alarms-field {
   display: flex;
@@ -243,7 +292,7 @@ export function buildRedisplayAlarms(
     ringing: alarms.ringing,
     ringingControls: Boolean(alarms.ringingId || alarms.snoozeId || alarms.stopId),
     script,
-    items: script ? (list?.alarms ?? []).map(presentAlarm) : [],
+    items: script ? orderAlarms(list?.alarms ?? [], alarms.nextAlarmId ? alarms.nextAlarm : undefined) : [],
   };
   if (alarms.nextAlarmId) view.nextAlarm = nextAlarmText(alarms.nextAlarm);
   const snoozed = alarms.snoozedUntilId ? formatAlarmStamp(alarms.snoozedUntil) : undefined;
@@ -300,7 +349,11 @@ export function redisplayAlarmServiceCall(
   return alarmServiceCall(action, kioskName, extra);
 }
 
-/** Fill `parent` with the alarms section. Later calls paint in place and keep the form. */
+/**
+ * Fill `parent` with the alarms section. Later calls paint in place and keep
+ * the add dialog. When the script is available, the first paint calls
+ * `onScript("list")` once for this kiosk.
+ */
 export function renderRedisplayAlarms(
   parent: HTMLElement,
   view: RedisplayAlarmsView,
@@ -315,6 +368,7 @@ export function renderRedisplayAlarms(
     parent.replaceChildren(root);
   }
   paintSection(parent, root, view);
+  loadAlarmList(root, view, callbacks);
 }
 
 function structureKey(view: RedisplayAlarmsView): string {
@@ -327,6 +381,14 @@ function structureKey(view: RedisplayAlarmsView): string {
   ].join("|");
 }
 
+function loadAlarmList(root: HTMLElement, view: RedisplayAlarmsView, callbacks: RedisplayAlarmsCallbacks): void {
+  if (!view.script) return;
+  const token = `listed:${view.kioskName}`;
+  if (root.dataset.rdAlarmsLoaded === token) return;
+  root.dataset.rdAlarmsLoaded = token;
+  callbacks.onScript("list");
+}
+
 function createSection(parent: HTMLElement, view: RedisplayAlarmsView): HTMLElement {
   const root = el("section", "rd-alarms");
   mark(root, "root");
@@ -336,7 +398,10 @@ function createSection(parent: HTMLElement, view: RedisplayAlarmsView): HTMLElem
   if (view.ringingControls) root.append(ringingBanner(parent, view));
   if (view.nextAlarm !== undefined) root.append(nextBlock());
   root.append(snoozedLine());
-  if (view.script) root.append(listBlock(), errorLine(), formBlock(parent, root));
+  if (view.script) {
+    const dialog = addDialog(parent, root);
+    root.append(alarmList(dialog), errorLine(), dialog);
+  }
   return root;
 }
 
@@ -361,6 +426,7 @@ function ringingBanner(parent: HTMLElement, view: RedisplayAlarmsView): HTMLElem
 
 function nextBlock(): HTMLElement {
   const block = el("div", "rd-alarms-next");
+  mark(block, "next");
   const kicker = el("p", "rd-alarms-kicker");
   kicker.textContent = "Next alarm";
   const clock = el("p", "rd-alarms-clock");
@@ -376,11 +442,41 @@ function snoozedLine(): HTMLElement {
   return line;
 }
 
-function listBlock(): HTMLElement {
+function alarmList(dialog: HTMLElement): HTMLElement {
   const list = el("div", "rd-alarms-list");
   mark(list, "items");
-  list.hidden = true;
+  const rows = el("div", "rd-alarms-rows");
+  mark(rows, "rows");
+  list.append(rows, addButton(dialog));
   return list;
+}
+
+function addButton(dialog: HTMLElement): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "rd-alarms-add";
+  button.textContent = "Add";
+  mark(button, "add");
+  button.addEventListener("click", () => openDialog(dialog));
+  return button;
+}
+
+function addDialog(parent: HTMLElement, section: HTMLElement): HTMLElement {
+  const dialog = el("dialog", "rd-alarms-dialog");
+  mark(dialog, "dialog");
+  dialog.hidden = true;
+  const title = el("p", "rd-alarms-dialog-title");
+  title.textContent = "Add alarm";
+  const error = el("p", "rd-alarms-error");
+  mark(error, "dialog-error");
+  error.hidden = true;
+  const actions = el("div", "rd-alarms-actions");
+  actions.append(
+    actionButton("Set", "set", () => submitAlarm(parent, section, dialog), "primary"),
+    actionButton("Close", "close", () => closeDialog(dialog)),
+  );
+  dialog.append(title, labeledInput("Time", "time", "time"), labeledInput("Label", "label", "text"), dayRow(), error, actions);
+  return dialog;
 }
 
 function errorLine(): HTMLElement {
@@ -388,18 +484,6 @@ function errorLine(): HTMLElement {
   mark(error, "error");
   error.hidden = true;
   return error;
-}
-
-function formBlock(parent: HTMLElement, root: HTMLElement): HTMLElement {
-  const form = el("div", "rd-alarms-form");
-  form.append(labeledInput("Time", "time", "time"), labeledInput("Label", "label", "text"), dayRow());
-  const actions = el("div", "rd-alarms-actions");
-  actions.append(
-    actionButton("Set", "set", () => submitAlarm(parent, root), "primary"),
-    actionButton("List", "list", () => callbacksFor.get(parent)?.onScript("list")),
-  );
-  form.append(actions);
-  return form;
 }
 
 function labeledInput(caption: string, name: string, type: string): HTMLElement {
@@ -431,16 +515,45 @@ function dayRow(): HTMLElement {
   return row;
 }
 
-function submitAlarm(parent: HTMLElement, root: HTMLElement): void {
+function submitAlarm(parent: HTMLElement, section: HTMLElement, dialog: HTMLElement): void {
   const callbacks = callbacksFor.get(parent);
   if (!callbacks) return;
-  const entry = readForm(root);
+  const entry = readForm(dialog);
   if (!entry.time) {
     callbacks.onError("Time is required");
-    paintError(root, "Time is required");
+    paintError(section, "Time is required");
     return;
   }
   callbacks.onScript("set", entry);
+  clearForm(dialog);
+  closeDialog(dialog);
+}
+
+function openDialog(dialog: HTMLElement): void {
+  dialog.hidden = false;
+  const modal = dialog as HTMLDialogElement;
+  if (typeof modal.showModal !== "function" || modal.open) return;
+  try {
+    modal.showModal();
+  } catch {
+    dialog.hidden = false;
+  }
+}
+
+function closeDialog(dialog: HTMLElement): void {
+  const modal = dialog as HTMLDialogElement;
+  if (typeof modal.close === "function" && modal.open) modal.close();
+  dialog.hidden = true;
+}
+
+function clearForm(scope: HTMLElement): void {
+  const time = scope.querySelector(slot("time"));
+  const label = scope.querySelector(slot("label"));
+  if (time && "value" in time) (time as HTMLInputElement).value = "";
+  if (label && "value" in label) (label as HTMLInputElement).value = "";
+  for (const box of scope.querySelectorAll("[data-rd-alarms-day]")) {
+    if ("checked" in box) (box as HTMLInputElement).checked = false;
+  }
 }
 
 function paintSection(parent: HTMLElement, root: HTMLElement, view: RedisplayAlarmsView): void {
@@ -449,6 +562,8 @@ function paintSection(parent: HTMLElement, root: HTMLElement, view: RedisplayAla
     clock.textContent = view.nextAlarm ?? "";
     clock.classList.toggle("rd-alarms-clock-empty", view.nextAlarm === "None");
   }
+  const next = root.querySelector(slot("next"));
+  if (next) hide(next, view.items.some((item) => item.next));
   const snoozed = root.querySelector(slot("snoozed"));
   if (snoozed) {
     snoozed.textContent = view.snoozedUntil ? `Snoozed until ${view.snoozedUntil}` : "";
@@ -461,28 +576,35 @@ function paintSection(parent: HTMLElement, root: HTMLElement, view: RedisplayAla
 }
 
 function paintList(parent: HTMLElement, root: HTMLElement, view: RedisplayAlarmsView): void {
-  const list = root.querySelector(slot("items"));
-  if (!list || !("replaceChildren" in list)) return;
-  const holder = list as HTMLElement;
+  const rows = root.querySelector(slot("rows"));
+  if (!rows || !("replaceChildren" in rows)) return;
+  const holder = rows as HTMLElement;
   const key = JSON.stringify(view.items);
   if (holder.dataset.rdAlarmsItems !== key) {
     holder.dataset.rdAlarmsItems = key;
-    holder.replaceChildren(...view.items.map((item) => itemRow(parent, item)));
+    const headline = view.nextAlarm && view.nextAlarm !== "None" ? view.nextAlarm : undefined;
+    holder.replaceChildren(...view.items.map((item) => itemRow(parent, item, item.next ? headline : undefined)));
   }
-  holder.hidden = view.items.length === 0;
 }
 
 function paintError(root: HTMLElement, error: string | undefined): void {
-  const node = root.querySelector(slot("error"));
-  if (!node) return;
-  node.textContent = error ?? "";
-  hide(node, !error);
+  for (const name of ["error", "dialog-error"]) {
+    const node = root.querySelector(slot(name));
+    if (!node) continue;
+    node.textContent = error ?? "";
+    hide(node, !error);
+  }
 }
 
-function itemRow(parent: HTMLElement, item: RedisplayAlarmItem): HTMLElement {
-  const row = el("div", "rd-alarms-item");
+function itemRow(parent: HTMLElement, item: RedisplayAlarmItem, headline?: string): HTMLElement {
+  const row = el("div", item.next ? "rd-alarms-item rd-alarms-item-next" : "rd-alarms-item");
+  if (item.next) {
+    const kicker = el("p", "rd-alarms-kicker");
+    kicker.textContent = "Next";
+    row.append(kicker);
+  }
   const time = el("p", "rd-alarms-item-time");
-  time.textContent = item.time || item.label;
+  time.textContent = headline || item.time || item.label;
   row.append(time);
   if (item.time && item.label) {
     const label = el("p", "rd-alarms-item-label");
@@ -549,7 +671,54 @@ function presentAlarm(alarm: RedisplayAlarmEntry): RedisplayAlarmItem {
     summary: [time, label].filter(Boolean).join(" "),
     detail: [days.join(", "), enabled ? "On" : "Off"].filter(Boolean).join(" \u00b7 "),
     action: enabled ? "turn_off" : "turn_on",
+    next: false,
   };
+}
+
+const WEEKDAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+
+function orderAlarms(alarms: readonly RedisplayAlarmEntry[], nextRaw: string | undefined): RedisplayAlarmItem[] {
+  const items = alarms.map((alarm) => presentAlarm(alarm));
+  const index = nextIndex(items, nextRaw);
+  if (index < 0) return items;
+  const chosen = items[index];
+  const next = { ...chosen, next: true, days: chosen.days.slice() };
+  return [next, ...items.slice(0, index), ...items.slice(index + 1)];
+}
+
+function nextIndex(items: readonly RedisplayAlarmItem[], raw: string | undefined): number {
+  const target = nextClock(raw);
+  if (!target) return -1;
+  const matches = items
+    .map((item, index) => ({ item, index, minutes: clockMinutes(item.time) }))
+    .filter((candidate) => candidate.minutes === target.minutes);
+  if (matches.length === 0) return -1;
+  const weekday = target.weekday;
+  const byDay = matches.find((candidate) => weekday !== undefined && candidate.item.days.map((day) => day.toLowerCase()).includes(weekday));
+  if (byDay) return byDay.index;
+  const open = matches.find((candidate) => candidate.item.days.length === 0);
+  if (open) return open.index;
+  return matches[0].index;
+}
+
+function nextClock(raw: string | undefined): { minutes: number; weekday?: string } | undefined {
+  if (!raw || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(raw)) return undefined;
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return undefined;
+  return { minutes: date.getHours() * 60 + date.getMinutes(), weekday: WEEKDAYS[date.getDay()] };
+}
+
+function clockMinutes(time: string): number | undefined {
+  const match = /^(\d{1,2}):(\d{2})/.exec(time.trim());
+  if (!match) return undefined;
+  let hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (hours > 23 || minutes > 59) return undefined;
+  const rest = time.trim().slice(match[0].length).trim().toLowerCase();
+  if (rest.startsWith("pm") && hours < 12) hours += 12;
+  if (rest.startsWith("am") && hours === 12) hours = 0;
+  if (hours > 23) return undefined;
+  return hours * 60 + minutes;
 }
 
 function unwrapAlarmPayload(result: unknown): Record<string, unknown> | undefined {
