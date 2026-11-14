@@ -1112,6 +1112,9 @@ class KioskRedisplay extends HTMLElement {
       (entityId, value) => {
         this.call("number", "set_value", { value }, { entity_id: entityId });
       },
+      (domain, service, data, target) => {
+        this.call(domain, service, data, target);
+      },
     );
   }
 
