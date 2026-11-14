@@ -138,16 +138,16 @@ ha-card {
   display: grid;
   grid-template-columns: 1fr 1fr;
   column-gap: 8px;
-  row-gap: 4px;
+  row-gap: 2px;
   width: 100%;
-  align-items: start;
+  align-items: end;
 }
 .section > * {
   min-width: 0;
 }
 .section + .section {
-  margin-top: 8px;
-  padding-top: 8px;
+  margin-top: 6px;
+  padding-top: 6px;
   border-top: 1px solid var(--divider-color);
 }
 .span {
@@ -220,9 +220,14 @@ ha-card {
   gap: 8px;
   width: 100%;
 }
-.line,
 .switch-row {
   min-height: 36px;
+}
+.line {
+  min-height: 0;
+  padding: 2px 0;
+  font-size: 0.85rem;
+  color: var(--secondary-text-color);
 }
 .value {
   color: var(--secondary-text-color);
@@ -254,6 +259,13 @@ input[type="text"] {
 }
 button {
   cursor: pointer;
+  width: auto;
+  align-self: flex-start;
+  justify-self: start;
+}
+.control > button,
+button.span {
+  width: auto;
 }
 button.accent {
   color: var(--primary-color);
