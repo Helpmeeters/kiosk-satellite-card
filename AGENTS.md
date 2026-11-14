@@ -37,6 +37,25 @@ EOF
 `gh` uses the file's basename as the asset name. Title and tag are `vX.Y.Z`. Notes are a `## Summary` with bullets, in the style of `v0.1.4` and `v0.1.5`. The release targets `main` because the tag is on `main`.
 
 9. Check `gh release view vX.Y.Z` and confirm the asset `kiosk-satellite-card.js` is uploaded.
+10. Update this Home Assistant so Wonderwood is serving that release. Leave Wonderwood Local alone. Commands are in "Update this Home Assistant" below.
+
+## Update this Home Assistant
+
+Do this after step 9, for the release that was just published. Install the new resource, then place or refresh the card on Wonderwood. Leave Wonderwood Local as it is.
+
+`HASS_URL` and `HASS_TOKEN` are in `/Users/andrewreutter/.hermes/.env`. Read them in the process. Never print the token, log it, or write it into the repo. SSH to treetop does not work. Talk to Home Assistant over the websocket (`HASS_URL` with `http` swapped to `ws`, path `/api/websocket`). Node on this machine has a global `WebSocket`. The first message is `auth_required`. Send `{ "type": "auth", "access_token": "<token>" }` and wait for `auth_ok`. Every command needs a numeric `id`. A reply is `{ "id", "type": "result", "success", "result" }`. Write large results to `/tmp` and print a summary.
+
+The HACS repository id on treetop is `1457382380` (`Helpmeeters/kiosk-satellite-card`, category `plugin`, file `kiosk-satellite-card.js`, local path `/config/www/community/kiosk-satellite-card`). If a command rejects it, `hacs/repositories/list` and take the repo whose `full_name` is `Helpmeeters/kiosk-satellite-card`.
+
+1. `hacs/repository/refresh` with `{ "repository": "1457382380" }`. A release published moments ago stays on the previous `installed_version` until this runs. `available_version` should then be the new tag.
+2. `hacs/repository/download` with `{ "repository": "1457382380", "version": "vX.Y.Z" }`. Allow 90 seconds. `hacs/repositories/list` must show `installed_version` `vX.Y.Z` and `pending_upgrade` false.
+3. Lovelace has one resource for this plugin. Its id is `19219e0c6e3449048683ed5c9d23e1d1`. HACS rewrites its URL during the download to `/hacsfiles/kiosk-satellite-card/kiosk-satellite-card.js?hacstag=1457382380<version with the dots removed>` (`0.1.6` → `1457382380016`). Read it with `lovelace/resources`. If the query is still the previous version, `lovelace/resources/update` that resource id only, with `res_type` `module` and that url. Do not add a second resource. The resource is global, so this is the install. It is separate from either dashboard's card config.
+4. Confirm the file Home Assistant serves. GET `$HASS_URL/hacsfiles/kiosk-satellite-card/kiosk-satellite-card.js` with `Authorization: Bearer <token>`. Status must be 200. The body must contain `kiosk-satellite-card@X.Y.Z`, the `RELEASE_MARKER` from `src/kiosk-satellite-card.ts`. The same bundle registers `custom:kiosk-satellite-card` and `custom:kiosk-redisplay`, so the body must also contain `kiosk-redisplay`.
+5. Wonderwood is the dashboard `lovelace/dashboards/list` titles Wonderwood: `url_path` `dynamic-home`, page `http://treetop:8123/dynamic-home/home`. `lovelace/config` for that path can still say title "Home (Dynamic)". Match the dashboard list title, then use `url_path`.
+6. Wonderwood Local is `url_path` `dynamic-home-local`, title Wonderwood Local, page `http://treetop:8123/dynamic-home-local/home`. Read it before and after. The body must be unchanged. Do not `lovelace/config/save` it, change its cards, or reload it.
+7. Place or refresh the card on Wonderwood only. Re-read `lovelace/config` with `{ "url_path": "dynamic-home" }` immediately before saving, and snapshot that result to `/tmp`. This instance has no config hash, so a second writer clobbers the first. Save with `lovelace/config/save`, `url_path` `dynamic-home`, and `config` set to that object. Re-read Wonderwood and check the cards you changed. Re-read Wonderwood Local and confirm it still matches the pre-save snapshot.
+
+Kiosk Redisplay is the card to put on Wonderwood when a release should show that display. Config is `type: custom:kiosk-redisplay` and `device` set to a device whose manufacturer is `kiosk_satellite`. A Music Assistant speaker manufactured "Kiosk Satellite" is a different device. If Wonderwood already has `custom:kiosk-satellite-card`, bind the redisplay card to that same `device`. If Wonderwood has no control card, do not copy a device id from Wonderwood Local. Audio-only satellites are the `kiosk_satellite` devices whose device sensor state is `amazon Echo Dot`. Check those sensors again before adding a card. At the 0.1.6 install they were Updoot1 `a78b06196d065fff7a9bf5c7331e0e5e` (`sensor.updoot_device`) and Updoot2 `1178ff3b00d6d8ef718e88e5f14ccd49` (`sensor.updoot2_device`). Both cards were added on Wonderwood view `home`, third section, directly above the `media-control` card, with `grid_options` `{ "columns": 12, "rows": "auto" }`. A later release that does not change card config leaves those cards in place and only refreshes the resource.
 
 ## Do not
 
@@ -46,3 +65,4 @@ EOF
 - Do not amend a commit unless a hook auto-modified files after a commit you just created, that commit is still unpushed, and the user asked for the amend. If a hook rejects the commit, fix the problem and make a new commit.
 - Do not commit `dist/`, `node_modules/`, `.gstack/`, or secrets. Attach `dist/kiosk-satellite-card.js` to the GitHub release instead of committing it.
 - Do not push any remote other than `origin`.
+- Do not edit, save, or reload Wonderwood Local (`dynamic-home-local`) when installing a release. Do not copy its cards onto Wonderwood.
