@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { EntityState, SatelliteModel, VolumeControl } from "../src/model";
-import { buildRedisplay, formatClock, formatElapsed, playerSnapshot, type PlayerSnapshot } from "../src/redisplay";
+import {
+  buildRedisplay,
+  formatClock,
+  formatElapsed,
+  formatVolumeReadout,
+  playbackMix,
+  playerSnapshot,
+  redisplayTab,
+  type PlayerSnapshot,
+} from "../src/redisplay";
 
 function satellite(partial: Partial<SatelliteModel> = {}): SatelliteModel {
   return {
@@ -198,5 +207,55 @@ describe("buildRedisplay", () => {
     assert.equal(missing.missing, true);
     assert.equal(missing.name, "missing-id");
     assert.equal(missing.title, "");
+  });
+});
+
+describe("redisplayTab", () => {
+  it("keeps the five tabs and folds a remembered Timers or Alarms selection into Alarms & Timers", () => {
+    assert.equal(redisplayTab("now"), "now");
+    assert.equal(redisplayTab("alarms"), "alarms");
+    assert.equal(redisplayTab("timers"), "alarms");
+    assert.equal(redisplayTab("intercom"), "intercom");
+    assert.equal(redisplayTab("agent"), "agent");
+    assert.equal(redisplayTab("device"), "device");
+    assert.equal(redisplayTab("light"), "now");
+  });
+});
+
+describe("playbackMix", () => {
+  it("bundles Volume with Mute, Chimes, and Noise gate", () => {
+    const mix = playbackMix(
+      satellite({
+        volumes: [
+          volume("Media volume", 47, "number.media"),
+          volume("Volume", 67, "number.volume"),
+          volume("Assistant volume", 80, "number.assistant"),
+          volume("Intercom volume", 60, "number.intercom"),
+        ],
+        voiceSwitches: [
+          { entityId: "switch.stop", name: "Stop word", on: false },
+          { entityId: "switch.gate", name: "Noise gate", on: true },
+          { entityId: "switch.timers", name: "Mute timers", on: false },
+          { entityId: "switch.chimes", name: "Chimes", on: true },
+          { entityId: "switch.mute", name: "Mute", on: false },
+        ],
+      }),
+    );
+    assert.deepEqual(mix, {
+      volume: { source: "number", entityId: "number.volume", min: 0, max: 100, step: 1, value: 67 },
+      switches: [
+        { entityId: "switch.mute", name: "Mute", on: false },
+        { entityId: "switch.chimes", name: "Chimes", on: true },
+        { entityId: "switch.gate", name: "Noise gate", on: true },
+      ],
+    });
+    assert.equal(playbackMix(satellite()), undefined);
+  });
+});
+
+describe("formatVolumeReadout", () => {
+  it("prints a percent at a 0–100 slider and the number otherwise", () => {
+    assert.equal(formatVolumeReadout(47, 100), "47%");
+    assert.equal(formatVolumeReadout(0.5, 1), "0.5");
   });
 });

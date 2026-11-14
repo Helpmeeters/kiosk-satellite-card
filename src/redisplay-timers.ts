@@ -32,6 +32,81 @@ export interface TimersView {
 /** Next on/off state for the mute-timers switch. The host calls switch.turn_on or switch.turn_off. */
 export type TimerMuteChange = (entityId: string, on: boolean) => void;
 
+/** Arguments for esphome.<node>_vs_start_timer. Hours, minutes, and seconds are non-negative integers. */
+export interface TimerStart {
+  name: string;
+  hours: number;
+  minutes: number;
+  seconds: number;
+}
+
+/** The host calls the device's vs_start_timer service with this payload. */
+export type TimerStartHandler = (start: TimerStart) => void;
+
+const START_FIELDS = ["name", "hours", "minutes", "seconds"] as const;
+
+/**
+ * Stem of assist_satellite.{stem} or assist_satellite.{stem}_assist_satellite.
+ * Used to pick that device's ESPHome timer service.
+ */
+export function assistStem(entityId: string | undefined): string | undefined {
+  const prefix = "assist_satellite.";
+  if (!entityId || !entityId.startsWith(prefix)) return undefined;
+  let stem = entityId.slice(prefix.length);
+  const suffix = "_assist_satellite";
+  if (stem.endsWith(suffix)) stem = stem.slice(0, -suffix.length);
+  return stem || undefined;
+}
+
+/**
+ * The ESPHome service that starts a timer on this satellite, such as
+ * `ks_updoot_vs_start_timer`. The name has to end at this device's stem and
+ * the service has to take name, hours, minutes, and seconds. `updoot` does
+ * not match `ks_updoot2_vs_start_timer`.
+ */
+export function timerStartService(
+  services: { esphome?: Record<string, unknown> } | undefined,
+  stem: string | undefined,
+): string | undefined {
+  const domain = services?.esphome;
+  if (!domain || !stem) return undefined;
+  const action = "vs_start_timer";
+  const exact = `${stem}_${action}`;
+  const suffix = `_${stem}_${action}`;
+  const matches = Object.keys(domain).filter((name) => {
+    if (name !== exact && !name.endsWith(suffix)) return false;
+    return hasStartFields(domain[name]);
+  });
+  if (matches.length === 0) return undefined;
+  matches.sort((a, b) => a.length - b.length || a.localeCompare(b));
+  return matches[0];
+}
+
+/**
+ * A duration the start service can take. An empty label becomes "Timer".
+ * All-zero and non-numeric durations are rejected.
+ */
+export function timerStartData(input: { name: string; hours: number; minutes: number; seconds: number }): TimerStart | undefined {
+  const hours = whole(input.hours);
+  const minutes = whole(input.minutes);
+  const seconds = whole(input.seconds);
+  if (hours + minutes + seconds <= 0) return undefined;
+  const name = input.name.trim() || "Timer";
+  return { name, hours, minutes, seconds };
+}
+
+function hasStartFields(spec: unknown): boolean {
+  if (!spec || typeof spec !== "object") return false;
+  const fields = (spec as { fields?: unknown }).fields;
+  if (!fields || typeof fields !== "object") return false;
+  return START_FIELDS.every((name) => Object.prototype.hasOwnProperty.call(fields, name));
+}
+
+function whole(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.round(value));
+}
+
 const EMPTY = new Set(["", "unknown", "unavailable", "none", "null"]);
 const COUNT_NAME = "timers";
 const NEXT_NAME = "next timer";
@@ -60,28 +135,49 @@ export function buildTimers(model: SatelliteModel): TimersView | undefined {
 }
 
 export const timersCss = `
+.rd-timers,
+.rd-timers * {
+  box-sizing: border-box;
+}
 .rd-timers {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 8px;
+  align-items: stretch;
+  gap: 14px;
   padding: 16px 16px 18px;
   color: var(--primary-text-color);
 }
-.rd-timers-label,
-.rd-timers-detail {
+.rd-timers-label {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--secondary-text-color);
+}
+.rd-timers-kicker,
+.rd-timers-detail,
+.rd-timers-field-label {
   margin: 0;
   color: var(--secondary-text-color);
-  font-size: 1.05rem;
+  font-size: 0.95rem;
   line-height: 1.35;
 }
 .rd-timers-headline {
-  margin: 0;
+  margin: 2px 0 0;
   color: var(--primary-text-color);
-  font-size: 2.4rem;
+  font-size: 1.35rem;
   font-weight: 500;
-  line-height: 1.05;
+  line-height: 1.15;
   font-variant-numeric: tabular-nums;
+}
+.rd-timers-headline-next {
+  font-size: 1.6rem;
+}
+.rd-timers-headline-empty {
+  font-size: 1.25rem;
+  font-weight: 500;
+  color: var(--secondary-text-color);
 }
 .rd-timers-mute {
   display: flex;
@@ -89,9 +185,6 @@ export const timersCss = `
   justify-content: space-between;
   gap: 16px;
   width: 100%;
-  margin-top: 8px;
-  padding-top: 14px;
-  border-top: 1px solid var(--divider-color);
 }
 .rd-timers-mute-label {
   color: var(--primary-text-color);
@@ -127,17 +220,277 @@ export const timersCss = `
 .rd-timers-switch-on .rd-timers-switch-knob {
   transform: translateX(20px);
 }
+.rd-timers-add {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 52px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--secondary-text-color);
+  font: inherit;
+  font-size: 1.35rem;
+  font-weight: 500;
+  line-height: 1.15;
+  text-align: left;
+  cursor: pointer;
+}
+.rd-timers-dialog {
+  width: min(280px, calc(100% - 32px));
+  max-width: 280px;
+  padding: 16px;
+  border: none;
+  border-radius: 16px;
+  background: var(--ha-card-background, var(--card-background-color));
+  color: var(--primary-text-color);
+}
+.rd-timers-dialog:not([hidden]) {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 20;
+  transform: translate(-50%, -50%);
+}
+.rd-timers-dialog::backdrop {
+  background: color-mix(in srgb, var(--primary-text-color) 32%, transparent);
+}
+.rd-timers-dialog-title {
+  margin: 0 0 4px;
+  font-size: 1.05rem;
+  font-weight: 500;
+}
+.rd-timers-duration {
+  display: flex;
+  gap: 8px;
+}
+.rd-timers-field {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.rd-timers-input {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--primary-text-color) 8%, transparent);
+  color: var(--primary-text-color);
+  font: inherit;
+}
+.rd-timers-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.rd-timers-button {
+  border: none;
+  color: inherit;
+  background: color-mix(in srgb, var(--primary-text-color) 10%, transparent);
+  cursor: pointer;
+  font: inherit;
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 999px;
+}
+.rd-timers-button-primary {
+  background: var(--primary-color);
+  color: var(--text-primary-color, #fff);
+}
+.rd-timers-error {
+  margin: 0;
+  color: var(--error-color, #ba1a1a);
+  font-size: 0.95rem;
+  line-height: 1.35;
+}
+.rd-timers [hidden] {
+  display: none !important;
+}
 `;
 
-export function renderTimers(parent: HTMLElement, view: TimersView, onMute?: TimerMuteChange): void {
+export function renderTimers(
+  parent: HTMLElement,
+  view: TimersView,
+  onMute?: TimerMuteChange,
+  onStart?: TimerStartHandler,
+): void {
+  const existing = sectionOf(parent);
+  if (existing && dialogOpen(existing)) {
+    paintTimers(existing, view);
+    return;
+  }
   const root = document.createElement("section");
   root.className = "rd-timers";
   root.setAttribute("aria-label", "Timers");
-  root.append(text("p", "rd-timers-label", "Timers"));
-  root.append(text("p", "rd-timers-headline", view.headline));
-  if (view.detail) root.append(text("p", "rd-timers-detail", view.detail));
+  root.append(text("h3", "rd-timers-label", "Timers"));
+  const kicker = text("p", "rd-timers-kicker", "Next");
+  root.append(kicker);
+  root.append(text("p", "rd-timers-headline", ""));
+  root.append(text("p", "rd-timers-detail", ""));
   if (view.mute) root.append(muteRow(view.mute, onMute));
+  if (onStart) root.append(addControl(onStart));
+  paintTimers(root, view);
   parent.replaceChildren(root);
+}
+
+function sectionOf(parent: HTMLElement): HTMLElement | undefined {
+  for (const child of parent.children) {
+    if (hasClass(child as HTMLElement, "rd-timers")) return child as HTMLElement;
+  }
+  return undefined;
+}
+
+function dialogOpen(root: HTMLElement): boolean {
+  const dialog = findClass(root, "rd-timers-dialog");
+  if (!dialog) return false;
+  if ("open" in dialog && (dialog as HTMLDialogElement).open) return true;
+  return dialog.hidden === false;
+}
+
+function paintTimers(root: HTMLElement, view: TimersView): void {
+  const headline = findClass(root, "rd-timers-headline");
+  if (headline) {
+    headline.textContent = view.headline;
+    toggleClass(headline, "rd-timers-headline-next", Boolean(view.next?.text));
+    toggleClass(headline, "rd-timers-headline-empty", view.headline === "No timers");
+  }
+  const kicker = findClass(root, "rd-timers-kicker");
+  if (kicker) kicker.hidden = !view.next?.text;
+  const detail = findClass(root, "rd-timers-detail");
+  if (detail) {
+    detail.textContent = view.detail ?? "";
+    detail.hidden = !view.detail;
+  }
+  if (!view.mute) return;
+  const button = findClass(root, "rd-timers-switch");
+  if (button) paintSwitch(button, view.mute.on);
+}
+
+function addControl(onStart: TimerStartHandler): HTMLElement {
+  const dialog = document.createElement("dialog");
+  dialog.className = "rd-timers-dialog";
+  dialog.hidden = true;
+  const title = text("p", "rd-timers-dialog-title", "Add timer");
+  const label = field("Label", "rd-timers-name", "text");
+  const duration = document.createElement("div");
+  duration.className = "rd-timers-duration";
+  duration.append(field("Hours", "rd-timers-hours", "number"), field("Minutes", "rd-timers-minutes", "number"), field("Seconds", "rd-timers-seconds", "number"));
+  const error = text("p", "rd-timers-error", "");
+  error.hidden = true;
+  const actions = document.createElement("div");
+  actions.className = "rd-timers-actions";
+  const set = button("Set", "rd-timers-button rd-timers-button-primary rd-timers-set", () => submitTimer(dialog, error, onStart));
+  const close = button("Close", "rd-timers-button rd-timers-close", () => closeDialog(dialog));
+  actions.append(set, close);
+  dialog.append(title, label, duration, error, actions);
+  const add = button("Add", "rd-timers-add", () => openDialog(dialog));
+  const wrap = document.createElement("div");
+  wrap.className = "rd-timers-add-wrap";
+  wrap.append(add, dialog);
+  return wrap;
+}
+
+function submitTimer(dialog: HTMLElement, error: HTMLElement, onStart: TimerStartHandler): void {
+  const start = timerStartData({
+    name: valueOf(findClass(dialog, "rd-timers-name")),
+    hours: numberOf(findClass(dialog, "rd-timers-hours")),
+    minutes: numberOf(findClass(dialog, "rd-timers-minutes")),
+    seconds: numberOf(findClass(dialog, "rd-timers-seconds")),
+  });
+  if (!start) {
+    error.textContent = "Time is required";
+    error.hidden = false;
+    return;
+  }
+  error.hidden = true;
+  onStart(start);
+  clearTimerForm(dialog);
+  closeDialog(dialog);
+}
+
+function field(caption: string, className: string, type: string): HTMLElement {
+  const label = document.createElement("label");
+  label.className = "rd-timers-field";
+  const textNode = text("span", "rd-timers-field-label", caption);
+  const input = document.createElement("input");
+  input.type = type;
+  input.className = `rd-timers-input ${className}`;
+  if (type === "number") {
+    input.min = "0";
+    input.step = "1";
+    input.value = "0";
+  }
+  label.append(textNode, input);
+  return label;
+}
+
+function button(caption: string, className: string, onClick: () => void): HTMLButtonElement {
+  const node = document.createElement("button");
+  node.type = "button";
+  node.className = className;
+  node.textContent = caption;
+  node.addEventListener("click", onClick);
+  return node;
+}
+
+function openDialog(dialog: HTMLElement): void {
+  dialog.hidden = false;
+  const modal = dialog as HTMLDialogElement;
+  if (typeof modal.showModal !== "function" || modal.open) return;
+  try {
+    modal.showModal();
+  } catch {
+    dialog.hidden = false;
+  }
+}
+
+function closeDialog(dialog: HTMLElement): void {
+  const modal = dialog as HTMLDialogElement;
+  if (typeof modal.close === "function" && modal.open) modal.close();
+  dialog.hidden = true;
+}
+
+function clearTimerForm(dialog: HTMLElement): void {
+  const name = findClass(dialog, "rd-timers-name");
+  if (name && "value" in name) (name as HTMLInputElement).value = "";
+  for (const className of ["rd-timers-hours", "rd-timers-minutes", "rd-timers-seconds"]) {
+    const input = findClass(dialog, className);
+    if (input && "value" in input) (input as HTMLInputElement).value = "0";
+  }
+}
+
+function valueOf(node: HTMLElement | undefined): string {
+  if (!node || !("value" in node)) return "";
+  const value = (node as HTMLInputElement).value;
+  return typeof value === "string" ? value : "";
+}
+
+function numberOf(node: HTMLElement | undefined): number {
+  const numeric = Number(valueOf(node));
+  return Number.isFinite(numeric) ? numeric : 0;
+}
+
+function findClass(root: HTMLElement, className: string): HTMLElement | undefined {
+  if (hasClass(root, className)) return root;
+  for (const child of root.children) {
+    const found = findClass(child as HTMLElement, className);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+function hasClass(element: HTMLElement, className: string): boolean {
+  return element.className.split(/\s+/).includes(className);
+}
+
+function toggleClass(element: HTMLElement, className: string, on: boolean): void {
+  const names = element.className.split(/\s+/).filter((name) => name && name !== className);
+  if (on) names.push(className);
+  element.className = names.join(" ");
 }
 
 function present(
@@ -203,7 +556,7 @@ function normalize(name: string): string {
   return name.trim().toLowerCase();
 }
 
-function text(tag: "p" | "span", className: string, value: string): HTMLElement {
+function text(tag: "h3" | "p" | "span", className: string, value: string): HTMLElement {
   const node = document.createElement(tag);
   node.className = className;
   node.textContent = value;
@@ -232,7 +585,7 @@ function muteRow(mute: TimerMute, onMute: TimerMuteChange | undefined): HTMLElem
   return row;
 }
 
-function paintSwitch(button: HTMLButtonElement, on: boolean): void {
+function paintSwitch(button: HTMLElement, on: boolean): void {
   button.className = on ? "rd-timers-switch rd-timers-switch-on" : "rd-timers-switch";
   button.setAttribute("aria-checked", on ? "true" : "false");
 }

@@ -1,4 +1,5 @@
-import type { SatelliteModel, SwitchControl } from "./model";
+import type { SatelliteModel, SwitchControl, VolumeControl } from "./model";
+import { formatVolumeReadout } from "./redisplay";
 
 const INTERCOM_SWITCHES = ["intercom enabled", "intercom do not disturb"] as const;
 
@@ -8,8 +9,19 @@ export interface IntercomSwitchView {
   on: boolean;
 }
 
+export interface IntercomVolumeView {
+  entityId: string;
+  name: string;
+  min: number;
+  max: number;
+  step: number;
+  value: number | null;
+}
+
 export interface IntercomView {
   switches: IntercomSwitchView[];
+  /** Intercom volume, drawn like the Media volume slider. */
+  volume?: IntercomVolumeView;
 }
 
 /**
@@ -23,8 +35,10 @@ export type IntercomSwitchChange = (
   target: { entity_id: string },
 ) => void;
 
+export type IntercomVolumeChange = (entityId: string, value: number) => void;
+
 /**
- * Intercom enabled and Intercom do not disturb, the switches the control card shows.
+ * Intercom enabled and Intercom do not disturb, plus Intercom volume.
  * The Intercom and Intercom kiosk text sensors are not on SatelliteModel, so there is no call state.
  */
 export function buildIntercom(model: SatelliteModel): IntercomView | undefined {
@@ -32,8 +46,11 @@ export function buildIntercom(model: SatelliteModel): IntercomView | undefined {
     const found = findSwitch(model, name);
     return found ? [{ entityId: found.entityId, name: found.name, on: found.on }] : [];
   });
-  if (switches.length === 0) return undefined;
-  return { switches };
+  const volume = model.volumes.find((item) => normalize(item.name) === "intercom volume");
+  if (switches.length === 0 && !volume) return undefined;
+  const view: IntercomView = { switches };
+  if (volume) view.volume = volumeView(volume);
+  return view;
 }
 
 export const intercomCss = `
@@ -88,14 +105,32 @@ export const intercomCss = `
 .rd-intercom-switch-on .rd-intercom-value {
   color: var(--primary-color);
 }
+.rd-intercom-volume {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.rd-intercom-slider {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  accent-color: var(--primary-color);
+}
+.rd-intercom-volume-value {
+  min-width: 3.2em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--secondary-text-color);
+}
 `;
 
 export function renderIntercom(
   parent: HTMLElement,
   view: IntercomView | undefined,
   onSwitch: IntercomSwitchChange,
+  onVolume?: IntercomVolumeChange,
 ): void {
-  if (!view || view.switches.length === 0) {
+  if (!view || (view.switches.length === 0 && !view.volume)) {
     parent.replaceChildren();
     return;
   }
@@ -104,7 +139,43 @@ export function renderIntercom(
   root.setAttribute("aria-label", "Intercom");
   root.append(text("p", "rd-intercom-label", "Intercom"));
   for (const item of view.switches) root.append(switchButton(item, onSwitch));
+  if (view.volume) root.append(volumeRow(view.volume, onVolume));
   parent.replaceChildren(root);
+}
+
+function volumeView(volume: VolumeControl): IntercomVolumeView {
+  return {
+    entityId: volume.entityId,
+    name: volume.name,
+    min: volume.min,
+    max: volume.max,
+    step: volume.step,
+    value: volume.value,
+  };
+}
+
+function volumeRow(volume: IntercomVolumeView, onVolume: IntercomVolumeChange | undefined): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "rd-intercom-volume";
+  const label = text("span", "rd-intercom-volume-label", "Intercom");
+  const slider = document.createElement("input");
+  slider.type = "range";
+  slider.className = "rd-intercom-slider";
+  slider.min = String(volume.min);
+  slider.max = String(volume.max);
+  slider.step = String(volume.step);
+  slider.value = String(volume.value ?? volume.min);
+  slider.dataset.entity = volume.entityId;
+  slider.setAttribute("aria-label", "Intercom volume");
+  const readout = text("span", "rd-intercom-volume-value", volume.value === null ? "" : formatVolumeReadout(volume.value, volume.max));
+  slider.addEventListener("input", () => {
+    readout.textContent = formatVolumeReadout(Number(slider.value), volume.max);
+  });
+  slider.addEventListener("change", () => {
+    onVolume?.(volume.entityId, Number(slider.value));
+  });
+  row.append(label, slider, readout);
+  return row;
 }
 
 function findSwitch(model: SatelliteModel, name: string): SwitchControl | undefined {

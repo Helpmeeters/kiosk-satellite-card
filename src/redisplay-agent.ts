@@ -1,4 +1,5 @@
-import type { SatelliteModel } from "./model";
+import type { SatelliteModel, SwitchControl, VolumeControl } from "./model";
+import { formatVolumeReadout } from "./redisplay";
 
 export interface AgentSelectView {
   entityId: string;
@@ -7,8 +8,27 @@ export interface AgentSelectView {
   value: string;
 }
 
+export interface AgentVolumeView {
+  entityId: string;
+  name: string;
+  min: number;
+  max: number;
+  step: number;
+  value: number | null;
+}
+
+export interface AgentSwitchView {
+  entityId: string;
+  name: string;
+  on: boolean;
+}
+
 export interface AgentView {
   selects: AgentSelectView[];
+  /** Assistant volume, the same slider shape as Media volume. */
+  volume?: AgentVolumeView;
+  /** Stop word. Other voice switches stay off this tab. */
+  stopWord?: AgentSwitchView;
 }
 
 /**
@@ -21,6 +41,12 @@ export type AgentSelectChange = (
   data: { option: string },
   target: { entity_id: string },
 ) => void;
+
+export interface AgentHandlers {
+  onSelect: AgentSelectChange;
+  onVolume?: (entityId: string, value: number) => void;
+  onSwitch?: (entityId: string, on: boolean) => void;
+}
 
 interface AgentRow {
   /** Finished speaking detection fills the row. Pairs stay two columns. */
@@ -35,23 +61,28 @@ const ROWS: ReadonlyArray<{ names: readonly string[]; single: boolean }> = [
   { names: ["wake word engine", "wake word sensitivity"], single: false },
 ];
 
-const handlers = new WeakMap<HTMLElement, AgentSelectChange>();
+const handlers = new WeakMap<HTMLElement, AgentHandlers>();
 const layouts = new WeakMap<HTMLElement, string>();
 
 /**
  * Wake word, wake word 2, assistant, assistant 2, finished speaking detection,
- * wake word engine, and sensitivity. Those are the voice selects. Settings stay out.
+ * wake word engine, and sensitivity, plus Assistant volume and Stop word.
+ * Mute, chimes, noise gate, and other settings stay out.
  */
 export function buildAgent(model: SatelliteModel): AgentView | undefined {
-  if (model.voiceSelects.length === 0) return undefined;
-  return {
-    selects: model.voiceSelects.map((select) => ({
-      entityId: select.entityId,
-      name: select.name,
-      options: listedOptions(select.options, select.value),
-      value: select.value,
-    })),
-  };
+  const selects = model.voiceSelects.map((select) => ({
+    entityId: select.entityId,
+    name: select.name,
+    options: listedOptions(select.options, select.value),
+    value: select.value,
+  }));
+  const volume = namedVolume(model, "assistant volume");
+  const stopWord = namedSwitch(model, "stop word");
+  if (selects.length === 0 && !volume && !stopWord) return undefined;
+  const view: AgentView = { selects };
+  if (volume) view.volume = volumeView(volume);
+  if (stopWord) view.stopWord = { entityId: stopWord.entityId, name: stopWord.name, on: stopWord.on };
+  return view;
 }
 
 export const agentCss = `
@@ -132,29 +163,85 @@ export const agentCss = `
   transform: rotate(45deg);
   pointer-events: none;
 }
+.rd-agent-volume {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: center;
+}
+.rd-agent-slider {
+  width: 100%;
+  accent-color: var(--primary-color);
+}
+.rd-agent-volume-value {
+  min-width: 3.2em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--secondary-text-color);
+}
+.rd-agent-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 36px;
+}
+.rd-agent-switch {
+  position: relative;
+  flex: 0 0 auto;
+  width: 52px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--primary-text-color) 16%, transparent);
+  color: inherit;
+  cursor: pointer;
+}
+.rd-agent-switch-on {
+  background: var(--primary-color);
+}
+.rd-agent-switch-knob {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--ha-card-background, var(--card-background-color, Canvas));
+  transition: transform 160ms ease;
+}
+.rd-agent-switch-on .rd-agent-switch-knob {
+  transform: translateX(20px);
+}
 `;
 
-export function renderAgent(parent: HTMLElement, view: AgentView | undefined, onSelect: AgentSelectChange): void {
-  handlers.set(parent, onSelect);
-  if (!view || view.selects.length === 0) {
+export function renderAgent(
+  parent: HTMLElement,
+  view: AgentView | undefined,
+  onSelect: AgentSelectChange,
+  extra?: Omit<AgentHandlers, "onSelect">,
+): void {
+  handlers.set(parent, { onSelect, ...extra });
+  if (!view || (view.selects.length === 0 && !view.volume && !view.stopWord)) {
     const existing = findSection(parent);
     if (existing) layouts.delete(existing);
     parent.replaceChildren();
     return;
   }
   const rows = groupSelects(view.selects);
-  const key = layoutKey(rows);
+  const key = layoutKey(rows, view);
   let section = findSection(parent);
   if (!section || layouts.get(section) !== key) {
     if (!section) {
       section = createSection();
       parent.replaceChildren(section);
     }
-    rebuildRows(section, parent, rows);
+    rebuildRows(section, parent, rows, view);
     layouts.set(section, key);
     return;
   }
-  patchRows(section, rows);
+  patchRows(section, rows, view);
 }
 
 /** Same option list the control card writes. A live value the entity left out is included. */
@@ -188,8 +275,28 @@ function normalize(name: string): string {
   return name.trim().toLowerCase().replace(/^vs\s+/, "");
 }
 
-function layoutKey(rows: readonly AgentRow[]): string {
-  return rows.map((row) => `${row.single ? "s" : "p"}:${row.selects.map((item) => item.entityId).join(",")}`).join("|");
+function layoutKey(rows: readonly AgentRow[], view: AgentView): string {
+  const rowsKey = rows.map((row) => `${row.single ? "s" : "p"}:${row.selects.map((item) => item.entityId).join(",")}`).join("|");
+  return `${rowsKey}|v:${view.volume?.entityId ?? ""}|w:${view.stopWord?.entityId ?? ""}`;
+}
+
+function namedVolume(model: SatelliteModel, name: string): VolumeControl | undefined {
+  return model.volumes.find((item) => normalize(item.name) === name);
+}
+
+function namedSwitch(model: SatelliteModel, name: string): SwitchControl | undefined {
+  return model.voiceSwitches.find((item) => normalize(item.name) === name);
+}
+
+function volumeView(volume: VolumeControl): AgentVolumeView {
+  return {
+    entityId: volume.entityId,
+    name: volume.name,
+    min: volume.min,
+    max: volume.max,
+    step: volume.step,
+    value: volume.value,
+  };
 }
 
 function findSection(parent: HTMLElement): HTMLElement | undefined {
@@ -207,7 +314,7 @@ function createSection(): HTMLElement {
   return root;
 }
 
-function rebuildRows(section: HTMLElement, parent: HTMLElement, rows: readonly AgentRow[]): void {
+function rebuildRows(section: HTMLElement, parent: HTMLElement, rows: readonly AgentRow[], view: AgentView): void {
   const existing = fieldMap(section);
   const heading = ensureHeading(section);
   const nodes: HTMLElement[] = [];
@@ -220,10 +327,15 @@ function rebuildRows(section: HTMLElement, parent: HTMLElement, rows: readonly A
     }
     nodes.push(node);
   }
-  section.replaceChildren(heading, ...nodes);
+  const extras: HTMLElement[] = [];
+  if (view.volume) extras.push(existingVolume(section) ?? createVolume(parent, view.volume));
+  if (view.stopWord) extras.push(existingSwitch(section) ?? createSwitch(parent, view.stopWord));
+  section.replaceChildren(heading, ...nodes, ...extras);
+  if (view.volume) paintVolume(section, view.volume);
+  if (view.stopWord) paintStop(section, view.stopWord);
 }
 
-function patchRows(section: HTMLElement, rows: readonly AgentRow[]): void {
+function patchRows(section: HTMLElement, rows: readonly AgentRow[], view: AgentView): void {
   const existing = fieldMap(section);
   for (const row of rows) {
     for (const item of row.selects) {
@@ -231,6 +343,8 @@ function patchRows(section: HTMLElement, rows: readonly AgentRow[]): void {
       if (field) updateField(field, item);
     }
   }
+  if (view.volume) paintVolume(section, view.volume);
+  if (view.stopWord) paintStop(section, view.stopWord);
 }
 
 function ensureHeading(section: HTMLElement): HTMLElement {
@@ -287,7 +401,7 @@ function createField(parent: HTMLElement, item: AgentSelectView): HTMLElement {
   select.addEventListener("change", () => {
     const handler = handlers.get(parent);
     if (!handler) return;
-    handler("select", "select_option", { option: select.value }, { entity_id: item.entityId });
+    handler.onSelect("select", "select_option", { option: select.value }, { entity_id: item.entityId });
   });
   const mark = document.createElement("span");
   mark.className = "rd-agent-mark";
@@ -318,6 +432,100 @@ function isOpen(select: HTMLElement): boolean {
   const root = select.getRootNode();
   if (!("activeElement" in root)) return false;
   return (root as Document | ShadowRoot).activeElement === select;
+}
+
+function existingVolume(section: HTMLElement): HTMLElement | undefined {
+  return findClass(section, "rd-agent-volume");
+}
+
+function existingSwitch(section: HTMLElement): HTMLElement | undefined {
+  return findClass(section, "rd-agent-switch-row");
+}
+
+function createVolume(parent: HTMLElement, volume: AgentVolumeView): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "rd-agent-volume";
+  const label = text("span", "rd-agent-volume-label", "Assistant");
+  const slider = document.createElement("input");
+  slider.type = "range";
+  slider.className = "rd-agent-slider";
+  slider.dataset.entity = volume.entityId;
+  slider.setAttribute("data-entity", volume.entityId);
+  slider.setAttribute("aria-label", "Assistant volume");
+  const readout = text("span", "rd-agent-volume-value", "");
+  slider.addEventListener("input", () => {
+    readout.textContent = formatVolumeReadout(Number(slider.value), numberAttr(slider.max, volume.max));
+  });
+  slider.addEventListener("change", () => {
+    const entityId = slider.dataset.entity;
+    if (!entityId) return;
+    handlers.get(parent)?.onVolume?.(entityId, Number(slider.value));
+  });
+  row.append(label, slider, readout);
+  return row;
+}
+
+function paintVolume(section: HTMLElement, volume: AgentVolumeView): void {
+  const slider = findClass(section, "rd-agent-slider");
+  if (!slider || !("value" in slider)) return;
+  const input = slider as HTMLInputElement;
+  if (isOpen(input)) return;
+  input.min = String(volume.min);
+  input.max = String(volume.max);
+  input.step = String(volume.step);
+  input.dataset.entity = volume.entityId;
+  input.setAttribute("data-entity", volume.entityId);
+  const readout = findClass(section, "rd-agent-volume-value");
+  if (volume.value !== null && Number(input.value) !== volume.value) input.value = String(volume.value);
+  if (readout && volume.value !== null) {
+    const textValue = formatVolumeReadout(volume.value, volume.max);
+    if (readout.textContent !== textValue) readout.textContent = textValue;
+  }
+}
+
+function createSwitch(parent: HTMLElement, stopWord: AgentSwitchView): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "rd-agent-switch-row";
+  const label = text("span", "rd-agent-switch-label", stopWord.name);
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "rd-agent-switch";
+  button.dataset.entity = stopWord.entityId;
+  button.setAttribute("data-entity", stopWord.entityId);
+  button.setAttribute("role", "switch");
+  button.setAttribute("aria-label", stopWord.name);
+  const knob = document.createElement("span");
+  knob.className = "rd-agent-switch-knob";
+  button.append(knob);
+  button.addEventListener("click", () => {
+    const on = button.getAttribute("aria-checked") !== "true";
+    paintSwitch(button, on);
+    const entityId = button.dataset.entity;
+    if (entityId) handlers.get(parent)?.onSwitch?.(entityId, on);
+  });
+  row.append(label, button);
+  return row;
+}
+
+function paintStop(section: HTMLElement, stopWord: AgentSwitchView): void {
+  const button = findClass(section, "rd-agent-switch");
+  if (!button) return;
+  button.dataset.entity = stopWord.entityId;
+  button.setAttribute("data-entity", stopWord.entityId);
+  if (button.getAttribute("aria-label") !== stopWord.name) button.setAttribute("aria-label", stopWord.name);
+  const label = findClass(section, "rd-agent-switch-label");
+  if (label && label.textContent !== stopWord.name) label.textContent = stopWord.name;
+  paintSwitch(button, stopWord.on);
+}
+
+function paintSwitch(button: HTMLElement, on: boolean): void {
+  button.className = on ? "rd-agent-switch rd-agent-switch-on" : "rd-agent-switch";
+  button.setAttribute("aria-checked", on ? "true" : "false");
+}
+
+function numberAttr(value: string, fallback: number): number {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
 }
 
 function selectOf(field: HTMLElement): HTMLSelectElement | undefined {

@@ -45,6 +45,22 @@ export interface RedisplayView {
   timer?: string;
 }
 
+export interface PlaybackSwitch {
+  entityId: string;
+  name: string;
+  on: boolean;
+}
+
+/** Master volume with Mute, Chimes, and Noise gate. Media volume stays on the player. */
+export interface PlaybackMix {
+  volume?: RedisplayVolume;
+  switches: PlaybackSwitch[];
+}
+
+export type RedisplayTab = "now" | "alarms" | "intercom" | "agent" | "device";
+
+const MIX_SWITCHES = ["mute", "chimes", "noise gate"] as const;
+
 const ASSIST_LABELS: Record<string, string> = {
   listening: "Listening",
   processing: "Thinking",
@@ -125,6 +141,43 @@ export function buildRedisplay(model: SatelliteModel, player: PlayerSnapshot | u
   return view;
 }
 
+/** A remembered Timers or Alarms selection opens Alarms & Timers. Anything else unknown opens Now playing. */
+export function redisplayTab(id: string): RedisplayTab {
+  if (id === "alarms" || id === "timers") return "alarms";
+  if (id === "intercom" || id === "agent" || id === "device" || id === "now") return id;
+  return "now";
+}
+
+/**
+ * Volume (not Media volume) with Mute, Chimes, and Noise gate, in that order.
+ * Assistant volume, intercom volume, stop word, and mute timers stay out.
+ */
+export function playbackMix(model: SatelliteModel): PlaybackMix | undefined {
+  const master = model.volumes.find((volume) => normalize(volume.name) === "volume");
+  const switches = MIX_SWITCHES.flatMap((name) => {
+    const found = model.voiceSwitches.find((item) => normalize(item.name) === name);
+    return found ? [{ entityId: found.entityId, name: found.name, on: found.on }] : [];
+  });
+  if (!master && switches.length === 0) return undefined;
+  const mix: PlaybackMix = { switches };
+  if (master) {
+    mix.volume = {
+      source: "number",
+      entityId: master.entityId,
+      min: master.min,
+      max: master.max,
+      step: master.step,
+      value: master.value,
+    };
+  }
+  return mix;
+}
+
+export function formatVolumeReadout(value: number, max: number): string {
+  const rounded = Math.round(value * 10) / 10;
+  return max === 100 ? `${rounded}%` : String(rounded);
+}
+
 export function formatElapsed(seconds: number): string {
   const total = Math.max(0, Math.floor(seconds));
   const hours = Math.floor(total / 3600);
@@ -158,7 +211,7 @@ function trackProgress(
 }
 
 function displayVolume(volumes: readonly VolumeControl[], playerLevel: number | undefined): RedisplayVolume | undefined {
-  const media = volumes.find((volume) => volume.name.trim().toLowerCase() === "media volume");
+  const media = volumes.find((volume) => normalize(volume.name) === "media volume");
   if (media) {
     return {
       source: "number",
@@ -179,6 +232,10 @@ function displayVolume(volumes: readonly VolumeControl[], playerLevel: number | 
   };
 }
 
+function normalize(name: string): string {
+  return name.trim().toLowerCase();
+}
+
 function clockText(state: string | undefined): string | undefined {
   if (!state) return undefined;
   const clock = formatClock(state);
@@ -190,10 +247,10 @@ function clockText(state: string | undefined): string | undefined {
 }
 
 function timerText(model: SatelliteModel): string | undefined {
-  const next = model.timers.find((line) => line.name.trim().toLowerCase() === "next timer");
+  const next = model.timers.find((line) => normalize(line.name) === "next timer");
   const nextText = clockText(next?.state);
   if (nextText) return `Timer ${nextText}`;
-  const count = model.timers.find((line) => line.name.trim().toLowerCase() === "timers");
+  const count = model.timers.find((line) => normalize(line.name) === "timers");
   const numeric = Number(count?.state);
   if (!Number.isFinite(numeric) || numeric <= 0) return undefined;
   return numeric === 1 ? "1 timer" : `${numeric} timers`;

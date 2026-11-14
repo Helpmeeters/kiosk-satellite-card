@@ -238,6 +238,32 @@ describe("buildAgent", () => {
     assert.equal(JSON.stringify(view).includes("Delay"), false);
     assert.equal(JSON.stringify(view).includes("Timers"), false);
   });
+
+  it("adds assistant volume and stop word, and leaves the other voice switches out", () => {
+    const view = buildAgent(
+      satellite({
+        voiceSelects: [select("select.wake", "Wake word", ["Hey Jarvis"], "Hey Jarvis")],
+        volumes: [
+          { entityId: "number.media", name: "Media volume", min: 0, max: 100, step: 5, value: 47 },
+          { entityId: "number.assistant", name: "Assistant volume", min: 0, max: 100, step: 5, value: 80 },
+        ],
+        voiceSwitches: [
+          { entityId: "switch.mute", name: "Mute", on: true },
+          { entityId: "switch.chimes", name: "Chimes", on: true },
+          { entityId: "switch.gate", name: "Noise gate", on: false },
+          { entityId: "switch.stop", name: "Stop word", on: true },
+          { entityId: "switch.timers", name: "Mute timers", on: false },
+        ],
+      }),
+    );
+    assert.equal(view?.volume?.entityId, "number.assistant");
+    assert.equal(view?.volume?.value, 80);
+    assert.deepEqual(view?.stopWord, { entityId: "switch.stop", name: "Stop word", on: true });
+    assert.equal(JSON.stringify(view).includes("Mute"), false);
+    assert.equal(JSON.stringify(view).includes("Chimes"), false);
+    assert.equal(JSON.stringify(view).includes("Noise gate"), false);
+    assert.equal(JSON.stringify(view).includes("Media volume"), false);
+  });
 });
 
 describe("agentCss", () => {

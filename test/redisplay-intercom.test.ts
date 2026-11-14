@@ -127,14 +127,14 @@ function render(parent: El, view: IntercomView | undefined, onSwitch: IntercomSw
 }
 
 describe("buildIntercom", () => {
-  it("omits the section when the device has no intercom switches", () => {
+  it("omits the section when the device has no intercom switches or intercom volume", () => {
     const view = buildIntercom(
       satellite({
         voiceSwitches: [{ entityId: "switch.mute", name: "Mute", on: true }],
         volumes: [
           {
-            entityId: "number.intercom_volume",
-            name: "Intercom volume",
+            entityId: "number.media",
+            name: "Media volume",
             min: 0,
             max: 100,
             step: 1,
@@ -156,6 +156,34 @@ describe("buildIntercom", () => {
       }),
     );
     assert.equal(view, undefined);
+  });
+
+  it("keeps intercom volume when the device has no intercom switches", () => {
+    const view = buildIntercom(
+      satellite({
+        volumes: [
+          {
+            entityId: "number.intercom_volume",
+            name: "Intercom volume",
+            min: 0,
+            max: 100,
+            step: 5,
+            value: 60,
+          },
+        ],
+      }),
+    );
+    assert.deepEqual(view, {
+      switches: [],
+      volume: {
+        entityId: "number.intercom_volume",
+        name: "Intercom volume",
+        min: 0,
+        max: 100,
+        step: 5,
+        value: 60,
+      },
+    });
   });
 
   it("reads enabled and do not disturb from the voice switches, enabled first", () => {

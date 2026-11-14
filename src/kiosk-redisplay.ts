@@ -1,5 +1,15 @@
+import { batteryFillWidth, batteryMark } from "./battery";
 import { buildModel, parseConfig, type DeviceEntry, type EntityState, type RegistryEntry, type SatelliteModel } from "./model";
-import { buildRedisplay, playerSnapshot, type PlayerSnapshot, type RedisplayView } from "./redisplay";
+import {
+  buildRedisplay,
+  formatVolumeReadout,
+  playbackMix,
+  playerSnapshot,
+  redisplayTab,
+  type PlaybackMix,
+  type PlayerSnapshot,
+  type RedisplayView,
+} from "./redisplay";
 import {
   alarmListFromFailure,
   alarmListFromPayload,
@@ -12,8 +22,9 @@ import {
   type RedisplayAlarmList,
 } from "./redisplay-alarms";
 import { agentCss, buildAgent, renderAgent } from "./redisplay-agent";
+import { buildDevice, deviceCss, renderDevice } from "./redisplay-device";
 import { buildIntercom, intercomCss, renderIntercom } from "./redisplay-intercom";
-import { buildTimers, renderTimers, timersCss } from "./redisplay-timers";
+import { assistStem, buildTimers, renderTimers, timerStartService, timersCss, type TimerStart } from "./redisplay-timers";
 
 interface Hass {
   states: Record<string, EntityState>;
@@ -256,11 +267,105 @@ button.text {
   font-variant-numeric: tabular-nums;
   color: var(--secondary-text-color);
 }
+.mix {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  clear: both;
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--primary-text-color) 6%, transparent);
+}
+.mix .volume {
+  margin-top: 0;
+}
+.mix-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 36px;
+}
+.mix-switch-label {
+  font-size: 1.05rem;
+  line-height: 1.3;
+}
+.mix-toggle {
+  position: relative;
+  flex: 0 0 auto;
+  width: 52px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--primary-text-color) 16%, transparent);
+  color: inherit;
+  cursor: pointer;
+}
+.mix-toggle.is-on {
+  background: var(--primary-color);
+}
+.mix-knob {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--ha-card-background, var(--card-background-color, Canvas));
+  transition: transform 160ms ease;
+}
+.mix-toggle.is-on .mix-knob {
+  transform: translateX(20px);
+}
+.battery-slot {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  min-height: 28px;
+  padding: 12px 16px 0;
+}
+.battery {
+  flex: 0 0 auto;
+  color: var(--primary-text-color);
+  line-height: 0;
+  pointer-events: none;
+}
+.battery.is-low {
+  color: var(--error-color);
+}
+.battery svg {
+  display: block;
+  width: 25px;
+  height: 12px;
+}
+.battery-fill {
+  fill: currentColor;
+}
+.battery-bolt {
+  fill: var(--ha-card-background, var(--card-background-color, Canvas));
+  stroke: currentColor;
+  stroke-width: 0.6;
+  stroke-linejoin: round;
+}
 .missing p {
   margin: 0;
 }
 .panels {
   position: relative;
+  container-type: inline-size;
+}
+.columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+@container (max-width: 340px) {
+  .columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 .panel {
   padding: 16px 16px 12px;
@@ -275,19 +380,15 @@ button.text {
 .panel .rd-alarms,
 .panel .rd-timers,
 .panel .rd-intercom,
-.panel .rd-agent {
+.panel .rd-agent,
+.panel .rd-device {
   margin: 0;
   padding: 0;
   border-top: 0;
 }
-.timers-host {
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px solid var(--divider-color, rgba(127, 127, 127, 0.35));
-}
 .tabs {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 4px;
   margin: 2px 10px 10px;
   padding: 6px;
@@ -358,6 +459,7 @@ const ICONS = {
   alarms: "M12 22a2 2 0 0 0 2-2h-4a2 2 0 0 0 2 2zm6-6V11a7 7 0 0 0-5-6.71V4a2 2 0 1 0-4 0v.29A7 7 0 0 0 6 11v5l-2 2v1h16v-1l-2-2z",
   intercom: "M6.6 10.8a15 15 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.25 12 12 0 0 0 3.6.55 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1 12 12 0 0 0 .55 3.6 1 1 0 0 1-.25 1L6.6 10.8z",
   agent: "M3 9v6h4l5 5V4L7 9H3zm13.5 3a5 5 0 0 1-2.5 4.03V7.97A5 5 0 0 1 16.5 12zM14 3.23v2.06A7 7 0 0 1 19 12a7 7 0 0 1-5 6.71v2.06A9 9 0 0 0 21 12a9 9 0 0 0-7-8.77z",
+  device: "M7 2h10a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm5 16.5a1.25 1.25 0 1 0 0-2.5 1.25 1.25 0 0 0 0 2.5z",
 };
 
 const TABS = [
@@ -365,15 +467,14 @@ const TABS = [
   { id: "alarms", label: "Alarms & Timers", icon: ICONS.alarms },
   { id: "intercom", label: "Intercom", icon: ICONS.intercom },
   { id: "agent", label: "Voice Agent", icon: ICONS.agent },
+  { id: "device", label: "Device", icon: ICONS.device },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
 
-/** A remembered Timers selection lands on the combined Alarms & Timers panel. */
+/** A remembered Timers or Alarms selection lands on the combined Alarms & Timers panel. */
 function chosenTab(id: string): TabId {
-  if (id === "alarms" || id === "timers") return "alarms";
-  if (id === "intercom" || id === "agent" || id === "now") return id;
-  return "now";
+  return redisplayTab(id);
 }
 
 function devicesFrom(hass: Hass): DeviceEntry[] {
@@ -390,10 +491,43 @@ function alarmScriptAvailable(hass: Hass): boolean {
   return Boolean(hass.services?.script?.kiosk_satellite_alarms) || Boolean(hass.states?.["script.kiosk_satellite_alarms"]);
 }
 
-function faceSignature(view: RedisplayView): string {
+function faceSignature(view: RedisplayView, mix: PlaybackMix | undefined): string {
   if (view.missing) return "missing";
   const volume = view.volume ? `${view.volume.source}:${view.volume.entityId ?? ""}:${view.volume.min}:${view.volume.max}:${view.volume.step}` : "";
-  return [view.playerId ?? "", view.favoriteId ?? "", volume, view.snoozeId ?? "", view.stopId ?? ""].join("|");
+  const master = mix?.volume ? `${mix.volume.entityId ?? ""}:${mix.volume.min}:${mix.volume.max}:${mix.volume.step}` : "";
+  const switches = mix?.switches.map((item) => item.entityId).join(",") ?? "";
+  return [view.playerId ?? "", view.favoriteId ?? "", volume, master, switches, view.snoozeId ?? "", view.stopId ?? ""].join("|");
+}
+
+function batteryIcon(): SVGSVGElement {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("viewBox", "0 0 28 14");
+  svg.setAttribute("aria-hidden", "true");
+  const bolt = document.createElementNS(SVG_NS, "path");
+  bolt.setAttribute("class", "battery-bolt");
+  bolt.setAttribute("d", "M14.15 2.8 10.7 7.5h2.15l-1.05 3.7 4.55-5.2h-2.25z");
+  svg.append(
+    svgRect({
+      x: "0.8",
+      y: "0.8",
+      width: "22.2",
+      height: "12.4",
+      rx: "2.4",
+      fill: "none",
+      stroke: "currentColor",
+      "stroke-width": "1.4",
+    }),
+    svgRect({ x: "24.2", y: "4.4", width: "2.2", height: "5.2", rx: "0.8", fill: "currentColor" }),
+    svgRect({ x: "2.4", y: "2.5", width: "0", height: "9", rx: "1.1", class: "battery-fill" }),
+    bolt,
+  );
+  return svg;
+}
+
+function svgRect(attrs: Record<string, string>): SVGRectElement {
+  const node = document.createElementNS(SVG_NS, "rect");
+  for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
+  return node;
 }
 
 class KioskRedisplay extends HTMLElement {
@@ -410,10 +544,12 @@ class KioskRedisplay extends HTMLElement {
   private timersKey?: string;
   private intercomKey?: string;
   private agentKey?: string;
-  private dragging = false;
+  private deviceKey?: string;
+  private mix?: PlaybackMix;
+  private dragId?: string;
   private clock = 0;
   private readonly endDrag = (): void => {
-    this.dragging = false;
+    this.dragId = undefined;
   };
 
   constructor() {
@@ -471,7 +607,7 @@ class KioskRedisplay extends HTMLElement {
     window.removeEventListener("pointerup", this.endDrag);
     window.removeEventListener("pointercancel", this.endDrag);
     window.clearInterval(this.clock);
-    this.dragging = false;
+    this.dragId = undefined;
   }
 
   private renderCard(): void {
@@ -484,6 +620,7 @@ class KioskRedisplay extends HTMLElement {
       this.timersKey = undefined;
       this.intercomKey = undefined;
       this.agentKey = undefined;
+      this.deviceKey = undefined;
       this.signature = undefined;
     }
     this.model = buildModel({
@@ -497,9 +634,10 @@ class KioskRedisplay extends HTMLElement {
     this.player = playerSnapshot(playerId ? this._hass.states[playerId] : undefined);
     const view = buildRedisplay(this.model, this.player, Date.now());
     this.view = view;
+    this.mix = playbackMix(this.model);
     this.ensureShell();
     if (deviceChanged) this.clearPanels();
-    const signature = faceSignature(view);
+    const signature = faceSignature(view, this.mix);
     if (this.signature !== signature) {
       this.signature = signature;
       const now = this.piece("panel-now");
@@ -510,6 +648,8 @@ class KioskRedisplay extends HTMLElement {
     this.paintTimers();
     this.paintIntercom();
     this.paintAgent();
+    this.paintDevice();
+    this.paintBattery();
     this.showTab(this.tab);
   }
 
@@ -524,9 +664,19 @@ class KioskRedisplay extends HTMLElement {
     const root = this.shadowRoot;
     if (!root || root.querySelector("ha-card")) return;
     const style = document.createElement("style");
-    style.textContent = CSS + redisplayAlarmsCss + timersCss + intercomCss + agentCss;
+    style.textContent = CSS + redisplayAlarmsCss + timersCss + intercomCss + agentCss + deviceCss;
     const card = document.createElement("ha-card");
     card.dataset.card = "kiosk-redisplay";
+    const slot = document.createElement("div");
+    slot.className = "battery-slot";
+    slot.dataset.part = "battery-slot";
+    slot.hidden = true;
+    const battery = document.createElement("div");
+    battery.className = "battery";
+    battery.dataset.part = "battery";
+    battery.setAttribute("role", "img");
+    battery.append(batteryIcon());
+    slot.append(battery);
     const panels = document.createElement("div");
     panels.className = "panels";
     for (const tab of TABS) {
@@ -538,12 +688,14 @@ class KioskRedisplay extends HTMLElement {
       panel.setAttribute("role", "tabpanel");
       panel.setAttribute("aria-label", tab.label);
       if (tab.id === "alarms") {
+        const columns = document.createElement("div");
+        columns.className = "columns";
         const alarms = document.createElement("div");
         alarms.dataset.part = "alarms-host";
         const timers = document.createElement("div");
-        timers.className = "timers-host";
         timers.dataset.part = "timers-host";
-        panel.append(alarms, timers);
+        columns.append(alarms, timers);
+        panel.append(columns);
       }
       panels.append(panel);
     }
@@ -552,7 +704,7 @@ class KioskRedisplay extends HTMLElement {
     nav.setAttribute("role", "tablist");
     nav.setAttribute("aria-label", "Kiosk Redisplay");
     for (const tab of TABS) nav.append(this.tabButton(tab));
-    card.append(panels, nav);
+    card.append(slot, panels, nav);
     root.append(style, card);
   }
 
@@ -702,9 +854,46 @@ class KioskRedisplay extends HTMLElement {
     const stage = document.createElement("div");
     stage.className = "stage";
     stage.append(art, placeholder, title, artist, album, progress, transport);
-    if (view.volume) stage.append(this.volumeControl(view));
+    if (view.volume) stage.append(this.mediaVolume(view.volume));
     wrap.append(wash, scrim, status, banner, stage);
+    if (this.mix) wrap.append(this.mixGroup(this.mix));
     return wrap;
+  }
+
+  private mixGroup(mix: PlaybackMix): HTMLElement {
+    const group = document.createElement("div");
+    group.className = "mix";
+    group.setAttribute("aria-label", "Volume");
+    if (mix.volume) group.append(this.rangeRow("Volume", "Volume", "master-volume", "master-readout", mix.volume, (value) => this.commitMaster(value)));
+    for (const item of mix.switches) group.append(this.mixSwitch(item));
+    return group;
+  }
+
+  private mixSwitch(item: PlaybackMix["switches"][number]): HTMLElement {
+    const row = document.createElement("div");
+    row.className = "mix-switch";
+    const label = document.createElement("span");
+    label.className = "mix-switch-label";
+    label.textContent = item.name;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "mix-toggle";
+    button.dataset.entity = item.entityId;
+    button.setAttribute("role", "switch");
+    button.setAttribute("aria-label", item.name);
+    button.setAttribute("aria-checked", item.on ? "true" : "false");
+    if (item.on) button.classList.add("is-on");
+    const knob = document.createElement("span");
+    knob.className = "mix-knob";
+    button.append(knob);
+    button.addEventListener("click", () => {
+      const on = button.getAttribute("aria-checked") !== "true";
+      button.classList.toggle("is-on", on);
+      button.setAttribute("aria-checked", on ? "true" : "false");
+      this.call("switch", on ? "turn_on" : "turn_off", undefined, { entity_id: item.entityId });
+    });
+    row.append(label, button);
+    return row;
   }
 
   private playButton(): HTMLButtonElement {
@@ -746,35 +935,43 @@ class KioskRedisplay extends HTMLElement {
     return button;
   }
 
-  private volumeControl(view: RedisplayView): HTMLElement {
-    const volume = view.volume;
+  private mediaVolume(volume: NonNullable<RedisplayView["volume"]>): HTMLElement {
+    return this.rangeRow("Media", "Media volume", "volume", "volume-readout", volume, (value) => this.commitVolume(value));
+  }
+
+  private rangeRow(
+    labelText: string,
+    aria: string,
+    part: string,
+    readoutPart: string,
+    volume: { min: number; max: number; step: number; value: number | null },
+    commit: (value: number) => void,
+  ): HTMLElement {
     const row = document.createElement("div");
     row.className = "volume";
     const label = document.createElement("span");
-    label.textContent = "Media";
+    label.textContent = labelText;
     const slider = document.createElement("input");
     slider.type = "range";
-    slider.dataset.part = "volume";
-    if (volume) {
-      slider.min = String(volume.min);
-      slider.max = String(volume.max);
-      slider.step = String(volume.step);
-      slider.value = String(volume.value ?? volume.min);
-      slider.setAttribute("aria-label", "Media volume");
-    }
+    slider.dataset.part = part;
+    slider.min = String(volume.min);
+    slider.max = String(volume.max);
+    slider.step = String(volume.step);
+    slider.value = String(volume.value ?? volume.min);
+    slider.setAttribute("aria-label", aria);
     slider.addEventListener("pointerdown", () => {
-      this.dragging = true;
+      this.dragId = part;
     });
     slider.addEventListener("input", () => {
-      this.setText("volume-readout", this.volumeText(Number(slider.value), view.volume?.max ?? 100));
+      this.setText(readoutPart, formatVolumeReadout(Number(slider.value), volume.max));
     });
     slider.addEventListener("change", () => {
-      this.dragging = false;
-      this.commitVolume(Number(slider.value));
+      this.dragId = undefined;
+      commit(Number(slider.value));
     });
     const readout = document.createElement("span");
     readout.className = "value";
-    readout.dataset.part = "volume-readout";
+    readout.dataset.part = readoutPart;
     row.append(label, slider, readout);
     return row;
   }
@@ -801,6 +998,7 @@ class KioskRedisplay extends HTMLElement {
     this.paintProgress(view);
     this.paintPlay(view);
     this.paintVolume(view);
+    this.paintMix();
   }
 
   private paintArt(view: RedisplayView): void {
@@ -839,17 +1037,31 @@ class KioskRedisplay extends HTMLElement {
   }
 
   private paintVolume(view: RedisplayView): void {
-    if (this.dragging || !view.volume || view.volume.value === null) return;
-    const slider = this.piece("volume");
-    if (slider instanceof HTMLInputElement && Number(slider.value) !== view.volume.value) {
-      slider.value = String(view.volume.value);
-    }
-    this.setText("volume-readout", this.volumeText(view.volume.value, view.volume.max));
+    if (!view.volume) return;
+    this.paintRange("volume", "volume-readout", view.volume.value, view.volume.max);
   }
 
-  private volumeText(value: number, max: number): string {
-    const rounded = Math.round(value * 10) / 10;
-    return max === 100 ? `${rounded}%` : String(rounded);
+  private paintMix(): void {
+    const volume = this.mix?.volume;
+    if (volume) this.paintRange("master-volume", "master-readout", volume.value, volume.max);
+    const buttons = this.shadowRoot?.querySelectorAll<HTMLButtonElement>(".mix-toggle");
+    if (!buttons || !this.mix) return;
+    const byId = new Map(this.mix.switches.map((item) => [item.entityId, item.on]));
+    for (const button of buttons) {
+      const on = byId.get(button.dataset.entity ?? "");
+      if (on === undefined) continue;
+      const checked = button.getAttribute("aria-checked") === "true";
+      if (checked === on) continue;
+      button.classList.toggle("is-on", on);
+      button.setAttribute("aria-checked", on ? "true" : "false");
+    }
+  }
+
+  private paintRange(part: string, readout: string, value: number | null, max: number): void {
+    if (this.dragId === part || value === null) return;
+    const slider = this.piece(part);
+    if (slider instanceof HTMLInputElement && Number(slider.value) !== value) slider.value = String(value);
+    this.setText(readout, formatVolumeReadout(value, max));
   }
 
   private transport(service: string): void {
@@ -868,6 +1080,12 @@ class KioskRedisplay extends HTMLElement {
     const player = this.view?.playerId;
     if (!player) return;
     this.call("media_player", "volume_set", { volume_level: value / 100 }, { entity_id: player });
+  }
+
+  private commitMaster(value: number): void {
+    const entityId = this.mix?.volume?.entityId;
+    if (!entityId || !Number.isFinite(value)) return;
+    this.call("number", "set_value", { value }, { entity_id: entityId });
   }
 
   private press(entityId: string | undefined): void {
@@ -930,17 +1148,32 @@ class KioskRedisplay extends HTMLElement {
     const host = this.piece("timers-host");
     const model = this.model;
     if (!host || !model) return;
-    const view = buildTimers(model);
-    const key = view ? JSON.stringify(view) : "";
-    if (key === this.timersKey) return;
-    this.timersKey = key;
-    if (!view) {
-      host.replaceChildren(this.quiet("No timers"));
+    const view = buildTimers(model) ?? { headline: "No timers" };
+    const service = timerStartService(this._hass?.services, assistStem(model.assistEntityId));
+    const sensors = model.timers.length > 0;
+    if (!sensors && !service) {
+      if (this.timersKey !== "empty") {
+        this.timersKey = "empty";
+        host.replaceChildren(this.quiet("No timers"));
+      }
       return;
     }
-    renderTimers(host, view, (entityId, on) => {
-      this.call("switch", on ? "turn_on" : "turn_off", undefined, { entity_id: entityId });
-    });
+    const key = JSON.stringify({ view, service: service ?? "" });
+    if (key === this.timersKey && host.querySelector(".rd-timers")) return;
+    this.timersKey = key;
+    const start = service
+      ? (data: TimerStart) => {
+          this.call("esphome", service, { ...data });
+        }
+      : undefined;
+    renderTimers(
+      host,
+      view,
+      (entityId, on) => {
+        this.call("switch", on ? "turn_on" : "turn_off", undefined, { entity_id: entityId });
+      },
+      start,
+    );
   }
 
   private paintIntercom(): void {
@@ -955,9 +1188,16 @@ class KioskRedisplay extends HTMLElement {
       host.replaceChildren(this.quiet("No intercom switches"));
       return;
     }
-    renderIntercom(host, view, (domain, service, data, target) => {
-      this.call(domain, service, data, target);
-    });
+    renderIntercom(
+      host,
+      view,
+      (domain, service, data, target) => {
+        this.call(domain, service, data, target);
+      },
+      (entityId, value) => {
+        this.call("number", "set_value", { value }, { entity_id: entityId });
+      },
+    );
   }
 
   private paintAgent(): void {
@@ -973,9 +1213,67 @@ class KioskRedisplay extends HTMLElement {
       return;
     }
     this.agentKey = "view";
-    renderAgent(host, view, (domain, service, data, target) => {
-      this.call(domain, service, data, target);
+    renderAgent(
+      host,
+      view,
+      (domain, service, data, target) => {
+        this.call(domain, service, data, target);
+      },
+      {
+        onVolume: (entityId, value) => {
+          this.call("number", "set_value", { value }, { entity_id: entityId });
+        },
+        onSwitch: (entityId, on) => {
+          this.call("switch", on ? "turn_on" : "turn_off", undefined, { entity_id: entityId });
+        },
+      },
+    );
+  }
+
+  private paintDevice(): void {
+    const host = this.piece("panel-device");
+    const model = this.model;
+    if (!host || !model) return;
+    const view = buildDevice(model);
+    if (!view) {
+      if (this.deviceKey !== "") {
+        this.deviceKey = "";
+        host.replaceChildren(this.quiet("No device controls"));
+      }
+      return;
+    }
+    this.deviceKey = "view";
+    renderDevice(host, view, {
+      onInstall: (entityId) => {
+        this.call("update", "install", undefined, { entity_id: entityId });
+      },
+      onPress: (entityId, confirm, name) => {
+        if (confirm && !window.confirm(name)) return;
+        this.press(entityId);
+      },
     });
+  }
+
+  private paintBattery(): void {
+    const slot = this.piece("battery-slot");
+    const node = this.piece("battery");
+    const mark = this.model ? batteryMark(this.model.header) : undefined;
+    if (slot) slot.hidden = !mark;
+    if (!node) return;
+    if (!mark) {
+      node.removeAttribute("aria-label");
+      return;
+    }
+    node.classList.toggle("is-low", mark.low);
+    node.setAttribute("aria-label", mark.label);
+    const fill = node.querySelector(".battery-fill");
+    if (fill) {
+      const width = batteryFillWidth(mark.percent);
+      fill.setAttribute("width", width.toFixed(2));
+      (fill as SVGElement).style.display = width <= 0 ? "none" : "";
+    }
+    const bolt = node.querySelector(".battery-bolt");
+    if (bolt) (bolt as SVGElement).style.display = mark.charging ? "" : "none";
   }
 
   private quiet(text: string): HTMLElement {
@@ -1011,7 +1309,7 @@ if (!cardWindow.customCards.some((card) => card.type === "kiosk-redisplay")) {
   cardWindow.customCards.push({
     type: "kiosk-redisplay",
     name: "Kiosk Redisplay",
-    description: "Now playing, alarms and timers, intercom, and voice agent for an audio-only Kiosk Satellite.",
+    description: "Now playing, alarms and timers, intercom, voice agent, and device for an audio-only Kiosk Satellite.",
     preview: true,
   });
 }
