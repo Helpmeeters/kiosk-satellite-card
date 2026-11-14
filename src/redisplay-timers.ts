@@ -238,28 +238,22 @@ export const timersCss = `
   cursor: pointer;
 }
 .rd-timers-dialog {
-  width: min(280px, calc(100% - 32px));
-  max-width: 280px;
-  padding: 16px;
-  border: none;
-  border-radius: 16px;
-  background: var(--ha-card-background, var(--card-background-color));
+  display: block;
+  margin-top: 8px;
   color: var(--primary-text-color);
 }
-.rd-timers-dialog:not([hidden]) {
-  position: fixed;
-  top: 50%;
-  left: 50%;
-  z-index: 20;
-  transform: translate(-50%, -50%);
-}
-.rd-timers-dialog::backdrop {
-  background: color-mix(in srgb, var(--primary-text-color) 32%, transparent);
+.rd-timers-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
 }
 .rd-timers-dialog-title {
-  margin: 0 0 4px;
-  font-size: 1.05rem;
+  margin: 0;
+  font-size: 14px;
   font-weight: 500;
+  line-height: 20px;
+  letter-spacing: 0.1px;
 }
 .rd-timers-duration {
   display: flex;
@@ -346,9 +340,7 @@ function sectionOf(parent: HTMLElement): HTMLElement | undefined {
 
 function dialogOpen(root: HTMLElement): boolean {
   const dialog = findClass(root, "rd-timers-dialog");
-  if (!dialog) return false;
-  if ("open" in dialog && (dialog as HTMLDialogElement).open) return true;
-  return dialog.hidden === false;
+  return Boolean(dialog && dialog.hidden === false);
 }
 
 function paintTimers(root: HTMLElement, view: TimersView): void {
@@ -371,9 +363,11 @@ function paintTimers(root: HTMLElement, view: TimersView): void {
 }
 
 function addControl(onStart: TimerStartHandler): HTMLElement {
-  const dialog = document.createElement("dialog");
+  const dialog = document.createElement("ha-card");
   dialog.className = "rd-timers-dialog";
   dialog.hidden = true;
+  const body = document.createElement("div");
+  body.className = "rd-timers-card";
   const title = text("p", "rd-timers-dialog-title", "Add timer");
   const label = field("Label", "rd-timers-name", "text");
   const duration = document.createElement("div");
@@ -386,7 +380,8 @@ function addControl(onStart: TimerStartHandler): HTMLElement {
   const set = button("Set", "rd-timers-button rd-timers-button-primary rd-timers-set", () => submitTimer(dialog, error, onStart));
   const close = button("Close", "rd-timers-button rd-timers-close", () => closeDialog(dialog));
   actions.append(set, close);
-  dialog.append(title, label, duration, error, actions);
+  body.append(title, label, duration, error, actions);
+  dialog.append(body);
   const add = button("Add", "rd-timers-add", () => openDialog(dialog));
   const wrap = document.createElement("div");
   wrap.className = "rd-timers-add-wrap";
@@ -439,18 +434,9 @@ function button(caption: string, className: string, onClick: () => void): HTMLBu
 
 function openDialog(dialog: HTMLElement): void {
   dialog.hidden = false;
-  const modal = dialog as HTMLDialogElement;
-  if (typeof modal.showModal !== "function" || modal.open) return;
-  try {
-    modal.showModal();
-  } catch {
-    dialog.hidden = false;
-  }
 }
 
 function closeDialog(dialog: HTMLElement): void {
-  const modal = dialog as HTMLDialogElement;
-  if (typeof modal.close === "function" && modal.open) modal.close();
   dialog.hidden = true;
 }
 

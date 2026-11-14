@@ -62,12 +62,6 @@ export const intercomCss = `
   padding: 16px 16px 18px;
   color: var(--primary-text-color);
 }
-.rd-intercom-label {
-  margin: 0;
-  color: var(--secondary-text-color);
-  font-size: 1.05rem;
-  line-height: 1.35;
-}
 .rd-intercom-switch {
   display: flex;
   flex-direction: column;
@@ -137,7 +131,6 @@ export function renderIntercom(
   const root = document.createElement("section");
   root.className = "rd-intercom";
   root.setAttribute("aria-label", "Intercom");
-  root.append(text("p", "rd-intercom-label", "Intercom"));
   for (const item of view.switches) root.append(switchButton(item, onSwitch));
   if (view.volume) root.append(volumeRow(view.volume, onVolume));
   parent.replaceChildren(root);

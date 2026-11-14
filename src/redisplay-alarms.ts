@@ -193,28 +193,22 @@ export const redisplayAlarmsCss = `
   cursor: pointer;
 }
 .rd-alarms-dialog {
-  width: min(280px, calc(100% - 32px));
-  max-width: 280px;
-  padding: 16px;
-  border: none;
-  border-radius: 16px;
-  background: var(--ha-card-background, var(--card-background-color));
+  display: block;
+  margin-top: 8px;
   color: var(--primary-text-color);
 }
-.rd-alarms-dialog:not([hidden]) {
-  position: fixed;
-  top: 50%;
-  left: 50%;
-  z-index: 20;
-  transform: translate(-50%, -50%);
-}
-.rd-alarms-dialog::backdrop {
-  background: color-mix(in srgb, var(--primary-text-color) 32%, transparent);
+.rd-alarms-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
 }
 .rd-alarms-dialog-title {
-  margin: 0 0 4px;
-  font-size: 1.05rem;
+  margin: 0;
+  font-size: 14px;
   font-weight: 500;
+  line-height: 20px;
+  letter-spacing: 0.1px;
 }
 .rd-alarms-item-time {
   margin: 0;
@@ -400,7 +394,7 @@ function createSection(parent: HTMLElement, view: RedisplayAlarmsView): HTMLElem
   root.append(snoozedLine());
   if (view.script) {
     const dialog = addDialog(parent, root);
-    root.append(alarmList(dialog), errorLine(), dialog);
+    root.append(alarmList(dialog), dialog, errorLine());
   }
   return root;
 }
@@ -462,9 +456,11 @@ function addButton(dialog: HTMLElement): HTMLButtonElement {
 }
 
 function addDialog(parent: HTMLElement, section: HTMLElement): HTMLElement {
-  const dialog = el("dialog", "rd-alarms-dialog");
+  const dialog = document.createElement("ha-card");
+  dialog.className = "rd-alarms-dialog";
   mark(dialog, "dialog");
   dialog.hidden = true;
+  const body = el("div", "rd-alarms-card");
   const title = el("p", "rd-alarms-dialog-title");
   title.textContent = "Add alarm";
   const error = el("p", "rd-alarms-error");
@@ -475,7 +471,8 @@ function addDialog(parent: HTMLElement, section: HTMLElement): HTMLElement {
     actionButton("Set", "set", () => submitAlarm(parent, section, dialog), "primary"),
     actionButton("Close", "close", () => closeDialog(dialog)),
   );
-  dialog.append(title, labeledInput("Time", "time", "time"), labeledInput("Label", "label", "text"), dayRow(), error, actions);
+  body.append(title, labeledInput("Time", "time", "time"), labeledInput("Label", "label", "text"), dayRow(), error, actions);
+  dialog.append(body);
   return dialog;
 }
 
@@ -531,18 +528,9 @@ function submitAlarm(parent: HTMLElement, section: HTMLElement, dialog: HTMLElem
 
 function openDialog(dialog: HTMLElement): void {
   dialog.hidden = false;
-  const modal = dialog as HTMLDialogElement;
-  if (typeof modal.showModal !== "function" || modal.open) return;
-  try {
-    modal.showModal();
-  } catch {
-    dialog.hidden = false;
-  }
 }
 
 function closeDialog(dialog: HTMLElement): void {
-  const modal = dialog as HTMLDialogElement;
-  if (typeof modal.close === "function" && modal.open) modal.close();
   dialog.hidden = true;
 }
 

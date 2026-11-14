@@ -113,10 +113,13 @@ function optionNodes(selectNode: DomNode): DomNode[] {
 }
 
 describe("buildAgent", () => {
-  it("omits the section when the device has none of the voice selects", () => {
+  it("omits the section when the device has no voice agent controls", () => {
     const view = buildAgent(
       satellite({
-        voiceSwitches: [{ entityId: "switch.mute", name: "Mute", on: true }],
+        voiceSwitches: [
+          { entityId: "switch.chimes", name: "Chimes", on: true },
+          { entityId: "switch.gate", name: "Noise gate", on: false },
+        ],
         timers: [{ entityId: "sensor.timers", name: "Timers", state: "1" }],
         settings: [
           select("select.theme", "Theme", ["Dark", "Light"], "Dark"),
@@ -125,6 +128,9 @@ describe("buildAgent", () => {
       }),
     );
     assert.equal(view, undefined);
+    const mute = buildAgent(satellite({ voiceSwitches: [{ entityId: "switch.mute", name: "Mute", on: true }] }));
+    assert.deepEqual(mute?.mute, { entityId: "switch.mute", name: "Mute", on: true });
+    assert.equal(mute?.stopWord, undefined);
   });
 
   it("keeps the voice selects in order and leaves settings out", () => {
@@ -153,6 +159,7 @@ describe("buildAgent", () => {
           value: "Hey Jarvis",
         },
       ],
+      mute: { entityId: "switch.mute", name: "Mute", on: false },
     });
   });
 
@@ -234,12 +241,12 @@ describe("buildAgent", () => {
     );
     assert.deepEqual(view?.selects[2]?.options, ["Qwen"]);
     assert.equal(JSON.stringify(view).includes("Theme"), false);
-    assert.equal(JSON.stringify(view).includes("Mute"), false);
+    assert.deepEqual(view?.mute, { entityId: "switch.mute", name: "Mute", on: true });
     assert.equal(JSON.stringify(view).includes("Delay"), false);
     assert.equal(JSON.stringify(view).includes("Timers"), false);
   });
 
-  it("adds assistant volume and stop word, and leaves the other voice switches out", () => {
+  it("adds assistant volume, mute, and stop word, and leaves the other voice switches out", () => {
     const view = buildAgent(
       satellite({
         voiceSelects: [select("select.wake", "Wake word", ["Hey Jarvis"], "Hey Jarvis")],
@@ -258,10 +265,11 @@ describe("buildAgent", () => {
     );
     assert.equal(view?.volume?.entityId, "number.assistant");
     assert.equal(view?.volume?.value, 80);
+    assert.deepEqual(view?.mute, { entityId: "switch.mute", name: "Mute", on: true });
     assert.deepEqual(view?.stopWord, { entityId: "switch.stop", name: "Stop word", on: true });
-    assert.equal(JSON.stringify(view).includes("Mute"), false);
     assert.equal(JSON.stringify(view).includes("Chimes"), false);
     assert.equal(JSON.stringify(view).includes("Noise gate"), false);
+    assert.equal(JSON.stringify(view).includes("Mute timers"), false);
     assert.equal(JSON.stringify(view).includes("Media volume"), false);
   });
 });
@@ -286,7 +294,6 @@ describe("agentCss", () => {
     }
     for (const className of [
       "rd-agent",
-      "rd-agent-label",
       "rd-agent-row",
       "rd-agent-row-single",
       "rd-agent-field",
@@ -356,8 +363,7 @@ describe("renderAgent", () => {
     const section = parent.querySelector(".rd-agent");
     assert.equal(section?.tagName, "section");
     assert.equal(section?.getAttribute("aria-label"), "Voice Agent");
-    assert.equal(parent.querySelector(".rd-agent-label")?.tagName, "h2");
-    assert.equal(parent.querySelector(".rd-agent-label")?.textContent, "Voice Agent");
+    assert.equal(parent.querySelector(".rd-agent-label"), null);
     assert.equal(classNames(parent).every((name) => name.startsWith("rd-agent")), true);
     assert.equal(parent.children.length, 1);
 
@@ -396,7 +402,7 @@ describe("renderAgent", () => {
 
     const text = textOf(parent);
     assert.equal(text.includes("Theme"), false);
-    assert.equal(text.includes("Mute"), false);
+    assert.equal(parent.querySelector(".rd-agent-switch-label")?.textContent, "Mute");
     assert.equal(text.includes("Dark"), false);
   });
 

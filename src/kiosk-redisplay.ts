@@ -267,64 +267,21 @@ button.text {
   font-variant-numeric: tabular-nums;
   color: var(--secondary-text-color);
 }
-.mix {
+.title-row {
   display: flex;
-  flex-direction: column;
-  gap: 10px;
-  clear: both;
-  margin-top: 12px;
-  padding: 12px;
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--primary-text-color) 6%, transparent);
-}
-.mix .volume {
-  margin-top: 0;
-}
-.mix-switch {
-  display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  min-height: 36px;
-}
-.mix-switch-label {
-  font-size: 1.05rem;
-  line-height: 1.3;
-}
-.mix-toggle {
-  position: relative;
-  flex: 0 0 auto;
-  width: 52px;
-  height: 32px;
-  padding: 0;
-  border: 0;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--primary-text-color) 16%, transparent);
-  color: inherit;
-  cursor: pointer;
-}
-.mix-toggle.is-on {
-  background: var(--primary-color);
-}
-.mix-knob {
-  position: absolute;
-  top: 4px;
-  left: 4px;
-  width: 24px;
-  height: 24px;
-  border-radius: 999px;
-  background: var(--ha-card-background, var(--card-background-color, Canvas));
-  transition: transform 160ms ease;
-}
-.mix-toggle.is-on .mix-knob {
-  transform: translateX(20px);
-}
-.battery-slot {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  min-height: 28px;
   padding: 12px 16px 0;
+}
+.title-copy {
+  min-width: 0;
+}
+.subtitle {
+  margin: 2px 0 0;
+  color: var(--secondary-text-color);
+  font-size: 0.95rem;
+  line-height: 1.3;
 }
 .battery {
   flex: 0 0 auto;
@@ -494,9 +451,8 @@ function alarmScriptAvailable(hass: Hass): boolean {
 function faceSignature(view: RedisplayView, mix: PlaybackMix | undefined): string {
   if (view.missing) return "missing";
   const volume = view.volume ? `${view.volume.source}:${view.volume.entityId ?? ""}:${view.volume.min}:${view.volume.max}:${view.volume.step}` : "";
-  const master = mix?.volume ? `${mix.volume.entityId ?? ""}:${mix.volume.min}:${mix.volume.max}:${mix.volume.step}` : "";
-  const switches = mix?.switches.map((item) => item.entityId).join(",") ?? "";
-  return [view.playerId ?? "", view.favoriteId ?? "", volume, master, switches, view.snoozeId ?? "", view.stopId ?? ""].join("|");
+  const master = mix ? `${mix.volume.entityId ?? ""}:${mix.volume.min}:${mix.volume.max}:${mix.volume.step}` : "";
+  return [view.playerId ?? "", view.favoriteId ?? "", volume, master, view.snoozeId ?? "", view.stopId ?? ""].join("|");
 }
 
 function batteryIcon(): SVGSVGElement {
@@ -641,7 +597,7 @@ class KioskRedisplay extends HTMLElement {
     if (this.signature !== signature) {
       this.signature = signature;
       const now = this.piece("panel-now");
-      if (now) now.replaceChildren(view.missing ? this.missing(view) : this.face(view));
+      if (now) now.replaceChildren(view.missing ? this.missing() : this.face(view));
     }
     this.paint(view);
     this.paintAlarms();
@@ -667,16 +623,24 @@ class KioskRedisplay extends HTMLElement {
     style.textContent = CSS + redisplayAlarmsCss + timersCss + intercomCss + agentCss + deviceCss;
     const card = document.createElement("ha-card");
     card.dataset.card = "kiosk-redisplay";
-    const slot = document.createElement("div");
-    slot.className = "battery-slot";
-    slot.dataset.part = "battery-slot";
-    slot.hidden = true;
+    const header = document.createElement("header");
+    header.className = "title-row";
+    const copy = document.createElement("div");
+    copy.className = "title-copy";
+    const name = document.createElement("h2");
+    name.className = "name";
+    name.dataset.part = "name";
+    const subtitle = document.createElement("p");
+    subtitle.className = "subtitle";
+    subtitle.dataset.part = "subtitle";
+    copy.append(name, subtitle);
     const battery = document.createElement("div");
     battery.className = "battery";
     battery.dataset.part = "battery";
     battery.setAttribute("role", "img");
+    battery.hidden = true;
     battery.append(batteryIcon());
-    slot.append(battery);
+    header.append(copy, battery);
     const panels = document.createElement("div");
     panels.className = "panels";
     for (const tab of TABS) {
@@ -704,7 +668,7 @@ class KioskRedisplay extends HTMLElement {
     nav.setAttribute("role", "tablist");
     nav.setAttribute("aria-label", "Kiosk Redisplay");
     for (const tab of TABS) nav.append(this.tabButton(tab));
-    card.append(slot, panels, nav);
+    card.append(header, panels, nav);
     root.append(style, card);
   }
 
@@ -726,6 +690,8 @@ class KioskRedisplay extends HTMLElement {
   private showTab(id: string): void {
     const selected = chosenTab(id);
     this.tab = selected;
+    const label = TABS.find((tab) => tab.id === selected)?.label ?? "Now playing";
+    this.setText("subtitle", label);
     for (const tab of TABS) {
       const panel = this.piece(`panel-${tab.id}`);
       if (panel) panel.hidden = tab.id !== selected;
@@ -750,16 +716,12 @@ class KioskRedisplay extends HTMLElement {
     }
   }
 
-  private missing(view: RedisplayView): HTMLElement {
+  private missing(): HTMLElement {
     const wrap = document.createElement("div");
     wrap.className = "missing";
-    const id = document.createElement("p");
-    id.className = "name";
-    id.dataset.part = "missing-id";
-    id.textContent = view.name;
     const message = document.createElement("p");
     message.textContent = "Kiosk satellite not found";
-    wrap.append(id, message);
+    wrap.append(message);
     return wrap;
   }
 
@@ -779,14 +741,12 @@ class KioskRedisplay extends HTMLElement {
 
     const status = document.createElement("div");
     status.className = "status";
+    status.dataset.part = "status";
     const identity = document.createElement("div");
-    const name = document.createElement("h2");
-    name.className = "name";
-    name.dataset.part = "name";
     const assist = document.createElement("p");
     assist.className = "assist";
     assist.dataset.part = "assist";
-    identity.append(name, assist);
+    identity.append(assist);
     const clocks = document.createElement("div");
     const alarm = document.createElement("p");
     alarm.className = "alarm";
@@ -855,45 +815,13 @@ class KioskRedisplay extends HTMLElement {
     stage.className = "stage";
     stage.append(art, placeholder, title, artist, album, progress, transport);
     if (view.volume) stage.append(this.mediaVolume(view.volume));
+    if (this.mix) stage.append(this.masterVolume(this.mix.volume));
     wrap.append(wash, scrim, status, banner, stage);
-    if (this.mix) wrap.append(this.mixGroup(this.mix));
     return wrap;
   }
 
-  private mixGroup(mix: PlaybackMix): HTMLElement {
-    const group = document.createElement("div");
-    group.className = "mix";
-    group.setAttribute("aria-label", "Volume");
-    if (mix.volume) group.append(this.rangeRow("Volume", "Volume", "master-volume", "master-readout", mix.volume, (value) => this.commitMaster(value)));
-    for (const item of mix.switches) group.append(this.mixSwitch(item));
-    return group;
-  }
-
-  private mixSwitch(item: PlaybackMix["switches"][number]): HTMLElement {
-    const row = document.createElement("div");
-    row.className = "mix-switch";
-    const label = document.createElement("span");
-    label.className = "mix-switch-label";
-    label.textContent = item.name;
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "mix-toggle";
-    button.dataset.entity = item.entityId;
-    button.setAttribute("role", "switch");
-    button.setAttribute("aria-label", item.name);
-    button.setAttribute("aria-checked", item.on ? "true" : "false");
-    if (item.on) button.classList.add("is-on");
-    const knob = document.createElement("span");
-    knob.className = "mix-knob";
-    button.append(knob);
-    button.addEventListener("click", () => {
-      const on = button.getAttribute("aria-checked") !== "true";
-      button.classList.toggle("is-on", on);
-      button.setAttribute("aria-checked", on ? "true" : "false");
-      this.call("switch", on ? "turn_on" : "turn_off", undefined, { entity_id: item.entityId });
-    });
-    row.append(label, button);
-    return row;
+  private masterVolume(volume: PlaybackMix["volume"]): HTMLElement {
+    return this.rangeRow("Volume", "Volume", "master-volume", "master-readout", volume, (value) => this.commitMaster(value));
   }
 
   private playButton(): HTMLButtonElement {
@@ -977,11 +905,8 @@ class KioskRedisplay extends HTMLElement {
   }
 
   private paint(view: RedisplayView): void {
-    if (view.missing) {
-      this.setText("missing-id", view.name);
-      return;
-    }
     this.setText("name", view.name);
+    if (view.missing) return;
     this.setText("title", view.title);
     this.setText("artist", view.artist);
     this.hide("artist", view.artist.length === 0);
@@ -994,6 +919,7 @@ class KioskRedisplay extends HTMLElement {
     this.hide("alarm", !view.nextAlarm);
     this.setText("snoozed", view.snoozedUntil ? `Snoozed ${view.snoozedUntil}` : "");
     this.hide("snoozed", !view.snoozedUntil);
+    this.hide("status", !view.assist && !view.nextAlarm && !view.snoozedUntil);
     this.hide("banner", !view.ringing);
     this.paintProgress(view);
     this.paintPlay(view);
@@ -1044,17 +970,6 @@ class KioskRedisplay extends HTMLElement {
   private paintMix(): void {
     const volume = this.mix?.volume;
     if (volume) this.paintRange("master-volume", "master-readout", volume.value, volume.max);
-    const buttons = this.shadowRoot?.querySelectorAll<HTMLButtonElement>(".mix-toggle");
-    if (!buttons || !this.mix) return;
-    const byId = new Map(this.mix.switches.map((item) => [item.entityId, item.on]));
-    for (const button of buttons) {
-      const on = byId.get(button.dataset.entity ?? "");
-      if (on === undefined) continue;
-      const checked = button.getAttribute("aria-checked") === "true";
-      if (checked === on) continue;
-      button.classList.toggle("is-on", on);
-      button.setAttribute("aria-checked", on ? "true" : "false");
-    }
   }
 
   private paintRange(part: string, readout: string, value: number | null, max: number): void {
@@ -1251,14 +1166,16 @@ class KioskRedisplay extends HTMLElement {
         if (confirm && !window.confirm(name)) return;
         this.press(entityId);
       },
+      onSwitch: (entityId, on) => {
+        this.call("switch", on ? "turn_on" : "turn_off", undefined, { entity_id: entityId });
+      },
     });
   }
 
   private paintBattery(): void {
-    const slot = this.piece("battery-slot");
     const node = this.piece("battery");
     const mark = this.model ? batteryMark(this.model.header) : undefined;
-    if (slot) slot.hidden = !mark;
+    if (node) node.hidden = !mark;
     if (!node) return;
     if (!mark) {
       node.removeAttribute("aria-label");

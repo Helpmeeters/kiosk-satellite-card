@@ -45,21 +45,12 @@ export interface RedisplayView {
   timer?: string;
 }
 
-export interface PlaybackSwitch {
-  entityId: string;
-  name: string;
-  on: boolean;
-}
-
-/** Master volume with Mute, Chimes, and Noise gate. Media volume stays on the player. */
+/** Master volume. Media volume stays on the player. Mute, chimes, and noise gate stay off this slider. */
 export interface PlaybackMix {
-  volume?: RedisplayVolume;
-  switches: PlaybackSwitch[];
+  volume: RedisplayVolume;
 }
 
 export type RedisplayTab = "now" | "alarms" | "intercom" | "agent" | "device";
-
-const MIX_SWITCHES = ["mute", "chimes", "noise gate"] as const;
 
 const ASSIST_LABELS: Record<string, string> = {
   listening: "Listening",
@@ -149,28 +140,22 @@ export function redisplayTab(id: string): RedisplayTab {
 }
 
 /**
- * Volume (not Media volume) with Mute, Chimes, and Noise gate, in that order.
- * Assistant volume, intercom volume, stop word, and mute timers stay out.
+ * Volume, the master slider. Media volume, assistant volume, and intercom volume stay out.
+ * Mute, chimes, and noise gate are not part of this slider.
  */
 export function playbackMix(model: SatelliteModel): PlaybackMix | undefined {
   const master = model.volumes.find((volume) => normalize(volume.name) === "volume");
-  const switches = MIX_SWITCHES.flatMap((name) => {
-    const found = model.voiceSwitches.find((item) => normalize(item.name) === name);
-    return found ? [{ entityId: found.entityId, name: found.name, on: found.on }] : [];
-  });
-  if (!master && switches.length === 0) return undefined;
-  const mix: PlaybackMix = { switches };
-  if (master) {
-    mix.volume = {
+  if (!master) return undefined;
+  return {
+    volume: {
       source: "number",
       entityId: master.entityId,
       min: master.min,
       max: master.max,
       step: master.step,
       value: master.value,
-    };
-  }
-  return mix;
+    },
+  };
 }
 
 export function formatVolumeReadout(value: number, max: number): string {

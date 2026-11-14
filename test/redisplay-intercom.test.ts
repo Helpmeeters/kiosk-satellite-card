@@ -260,7 +260,7 @@ describe("renderIntercom", () => {
     const section = parent.querySelector(".rd-intercom");
     assert.equal(section?.tagName, "SECTION");
     assert.equal(section?.getAttribute("aria-label"), "Intercom");
-    assert.equal(parent.querySelector(".rd-intercom-label")?.textContent, "Intercom");
+    assert.equal(parent.querySelector(".rd-intercom-label"), null);
     const buttons = parent.querySelectorAll(".rd-intercom-switch");
     assert.equal(buttons.length, 2);
     assert.equal(buttons[0]?.querySelector(".rd-intercom-name")?.textContent, "Intercom enabled");
@@ -322,7 +322,6 @@ describe("intercomCss", () => {
     }
     for (const className of [
       "rd-intercom",
-      "rd-intercom-label",
       "rd-intercom-switch",
       "rd-intercom-switch-on",
       "rd-intercom-name",

@@ -138,6 +138,27 @@ describe("buildDevice", () => {
     assert.equal(view?.actions[2]?.confirm, false);
     assert.equal(view?.remoteAdmin, "https://example.test/admin");
     assert.equal(view?.diagnostics[0]?.name, "Battery");
+    assert.deepEqual(view?.switches, []);
+  });
+
+  it("puts Chimes and Noise gate on the device and leaves the other switches out", () => {
+    const view = buildDevice(
+      satellite({
+        voiceSwitches: [
+          { entityId: "switch.mute", name: "Mute", on: true },
+          { entityId: "switch.chimes", name: "VS Chimes", on: true },
+          { entityId: "switch.gate", name: "Noise gate", on: false },
+          { entityId: "switch.stop", name: "Stop word", on: true },
+          { entityId: "switch.timers", name: "Mute timers", on: false },
+        ],
+      }),
+    );
+    assert.deepEqual(view?.switches, [
+      { entityId: "switch.chimes", name: "VS Chimes", on: true },
+      { entityId: "switch.gate", name: "Noise gate", on: false },
+    ]);
+    assert.equal(JSON.stringify(view).includes("Mute"), false);
+    assert.equal(JSON.stringify(view).includes("Stop word"), false);
   });
 });
 
@@ -175,6 +196,7 @@ describe("renderDevice", () => {
       handlers: {
         onInstall: (entityId) => calls.push(`install:${entityId}`),
         onPress: (entityId, confirm, name) => calls.push(`press:${entityId}:${confirm}:${name}`),
+        onSwitch: (entityId, on) => calls.push(`switch:${entityId}:${on}`),
       },
     };
   };
@@ -197,7 +219,8 @@ describe("renderDevice", () => {
     const parent = new El("div");
     const { calls, handlers: on } = handlers();
     renderDevice(parent as unknown as HTMLElement, view(), on);
-    assert.equal(parent.querySelector(".rd-device-label")?.textContent, "Device");
+    assert.equal(parent.querySelector(".rd-device")?.getAttribute("aria-label"), "Device");
+    assert.equal(parent.querySelector(".rd-device-label"), null);
     assert.equal(parent.querySelector(".rd-device-install")?.hidden, false);
     assert.equal(parent.querySelector(".rd-device-installed")?.textContent, "Installed 1.0");
     assert.equal(parent.querySelector(".rd-device-link")?.getAttribute("href"), "https://example.test/admin");

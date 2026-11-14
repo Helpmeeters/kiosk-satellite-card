@@ -274,7 +274,9 @@ describe("redisplayAlarmsCss", () => {
     }
     assert.equal(redisplayAlarmsCss.includes("grid-template-columns"), false);
     assert.equal(redisplayAlarmsCss.includes("padding: 16px 16px 18px"), true);
-    assert.equal(redisplayAlarmsCss.includes("max-width: 280px"), true);
+    assert.match(redisplayAlarmsCss, /\.rd-alarms-card\s*\{[^}]*padding:\s*10px/);
+    assert.equal(redisplayAlarmsCss.includes("position: fixed"), false);
+    assert.equal(redisplayAlarmsCss.includes("::backdrop"), false);
   });
 });
 

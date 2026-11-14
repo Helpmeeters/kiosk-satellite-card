@@ -27,7 +27,9 @@ export interface AgentView {
   selects: AgentSelectView[];
   /** Assistant volume, the same slider shape as Media volume. */
   volume?: AgentVolumeView;
-  /** Stop word. Other voice switches stay off this tab. */
+  /** Mute. Chimes, noise gate, and mute timers stay off this tab. */
+  mute?: AgentSwitchView;
+  /** Stop word. */
   stopWord?: AgentSwitchView;
 }
 
@@ -66,8 +68,8 @@ const layouts = new WeakMap<HTMLElement, string>();
 
 /**
  * Wake word, wake word 2, assistant, assistant 2, finished speaking detection,
- * wake word engine, and sensitivity, plus Assistant volume and Stop word.
- * Mute, chimes, noise gate, and other settings stay out.
+ * wake word engine, and sensitivity, plus Assistant volume, Mute, and Stop word.
+ * Chimes, noise gate, mute timers, and other settings stay out.
  */
 export function buildAgent(model: SatelliteModel): AgentView | undefined {
   const selects = model.voiceSelects.map((select) => ({
@@ -77,10 +79,12 @@ export function buildAgent(model: SatelliteModel): AgentView | undefined {
     value: select.value,
   }));
   const volume = namedVolume(model, "assistant volume");
+  const mute = namedSwitch(model, "mute");
   const stopWord = namedSwitch(model, "stop word");
-  if (selects.length === 0 && !volume && !stopWord) return undefined;
+  if (selects.length === 0 && !volume && !mute && !stopWord) return undefined;
   const view: AgentView = { selects };
   if (volume) view.volume = volumeView(volume);
+  if (mute) view.mute = { entityId: mute.entityId, name: mute.name, on: mute.on };
   if (stopWord) view.stopWord = { entityId: stopWord.entityId, name: stopWord.name, on: stopWord.on };
   return view;
 }
@@ -93,13 +97,6 @@ export const agentCss = `
   gap: 14px;
   padding: 16px 16px 18px;
   color: var(--primary-text-color);
-}
-.rd-agent-label {
-  margin: 0;
-  color: var(--primary-text-color);
-  font-size: 1.25rem;
-  font-weight: 500;
-  line-height: 1.2;
 }
 .rd-agent-row {
   display: grid;
@@ -223,7 +220,7 @@ export function renderAgent(
   extra?: Omit<AgentHandlers, "onSelect">,
 ): void {
   handlers.set(parent, { onSelect, ...extra });
-  if (!view || (view.selects.length === 0 && !view.volume && !view.stopWord)) {
+  if (!view || (view.selects.length === 0 && !view.volume && !view.mute && !view.stopWord)) {
     const existing = findSection(parent);
     if (existing) layouts.delete(existing);
     parent.replaceChildren();
@@ -277,7 +274,12 @@ function normalize(name: string): string {
 
 function layoutKey(rows: readonly AgentRow[], view: AgentView): string {
   const rowsKey = rows.map((row) => `${row.single ? "s" : "p"}:${row.selects.map((item) => item.entityId).join(",")}`).join("|");
-  return `${rowsKey}|v:${view.volume?.entityId ?? ""}|w:${view.stopWord?.entityId ?? ""}`;
+  const switches = agentSwitches(view).map((item) => item.entityId).join(",");
+  return `${rowsKey}|v:${view.volume?.entityId ?? ""}|s:${switches}`;
+}
+
+function agentSwitches(view: AgentView): AgentSwitchView[] {
+  return [view.mute, view.stopWord].filter((item): item is AgentSwitchView => Boolean(item));
 }
 
 function namedVolume(model: SatelliteModel, name: string): VolumeControl | undefined {
@@ -310,13 +312,11 @@ function createSection(): HTMLElement {
   const root = document.createElement("section");
   root.className = "rd-agent";
   root.setAttribute("aria-label", "Voice Agent");
-  root.append(text("h2", "rd-agent-label", "Voice Agent"));
   return root;
 }
 
 function rebuildRows(section: HTMLElement, parent: HTMLElement, rows: readonly AgentRow[], view: AgentView): void {
   const existing = fieldMap(section);
-  const heading = ensureHeading(section);
   const nodes: HTMLElement[] = [];
   for (const row of rows) {
     const node = document.createElement("div");
@@ -329,10 +329,10 @@ function rebuildRows(section: HTMLElement, parent: HTMLElement, rows: readonly A
   }
   const extras: HTMLElement[] = [];
   if (view.volume) extras.push(existingVolume(section) ?? createVolume(parent, view.volume));
-  if (view.stopWord) extras.push(existingSwitch(section) ?? createSwitch(parent, view.stopWord));
-  section.replaceChildren(heading, ...nodes, ...extras);
+  for (const item of agentSwitches(view)) extras.push(switchRow(section, item.entityId) ?? createSwitch(parent, item));
+  section.replaceChildren(...nodes, ...extras);
   if (view.volume) paintVolume(section, view.volume);
-  if (view.stopWord) paintStop(section, view.stopWord);
+  for (const item of agentSwitches(view)) paintSwitchView(section, item);
 }
 
 function patchRows(section: HTMLElement, rows: readonly AgentRow[], view: AgentView): void {
@@ -344,19 +344,7 @@ function patchRows(section: HTMLElement, rows: readonly AgentRow[], view: AgentV
     }
   }
   if (view.volume) paintVolume(section, view.volume);
-  if (view.stopWord) paintStop(section, view.stopWord);
-}
-
-function ensureHeading(section: HTMLElement): HTMLElement {
-  for (const child of section.children) {
-    if (hasClass(child as HTMLElement, "rd-agent-label")) {
-      const heading = child as HTMLElement;
-      heading.textContent = "Voice Agent";
-      return heading;
-    }
-  }
-  const heading = text("h2", "rd-agent-label", "Voice Agent");
-  return heading;
+  for (const item of agentSwitches(view)) paintSwitchView(section, item);
 }
 
 function fieldMap(section: HTMLElement): Map<string, HTMLElement> {
@@ -438,8 +426,21 @@ function existingVolume(section: HTMLElement): HTMLElement | undefined {
   return findClass(section, "rd-agent-volume");
 }
 
-function existingSwitch(section: HTMLElement): HTMLElement | undefined {
-  return findClass(section, "rd-agent-switch-row");
+function switchRow(section: HTMLElement, entityId: string): HTMLElement | undefined {
+  return switchRows(section).find((row) => findClass(row, "rd-agent-switch")?.dataset.entity === entityId);
+}
+
+function switchRows(section: HTMLElement): HTMLElement[] {
+  const rows: HTMLElement[] = [];
+  const walk = (node: HTMLElement): void => {
+    for (const child of node.children) {
+      const element = child as HTMLElement;
+      if (hasClass(element, "rd-agent-switch-row")) rows.push(element);
+      else walk(element);
+    }
+  };
+  walk(section);
+  return rows;
 }
 
 function createVolume(parent: HTMLElement, volume: AgentVolumeView): HTMLElement {
@@ -507,15 +508,16 @@ function createSwitch(parent: HTMLElement, stopWord: AgentSwitchView): HTMLEleme
   return row;
 }
 
-function paintStop(section: HTMLElement, stopWord: AgentSwitchView): void {
-  const button = findClass(section, "rd-agent-switch");
+function paintSwitchView(section: HTMLElement, item: AgentSwitchView): void {
+  const row = switchRow(section, item.entityId);
+  const button = row ? findClass(row, "rd-agent-switch") : undefined;
   if (!button) return;
-  button.dataset.entity = stopWord.entityId;
-  button.setAttribute("data-entity", stopWord.entityId);
-  if (button.getAttribute("aria-label") !== stopWord.name) button.setAttribute("aria-label", stopWord.name);
-  const label = findClass(section, "rd-agent-switch-label");
-  if (label && label.textContent !== stopWord.name) label.textContent = stopWord.name;
-  paintSwitch(button, stopWord.on);
+  button.dataset.entity = item.entityId;
+  button.setAttribute("data-entity", item.entityId);
+  if (button.getAttribute("aria-label") !== item.name) button.setAttribute("aria-label", item.name);
+  const label = findClass(row as HTMLElement, "rd-agent-switch-label");
+  if (label && label.textContent !== item.name) label.textContent = item.name;
+  paintSwitch(button, item.on);
 }
 
 function paintSwitch(button: HTMLElement, on: boolean): void {
@@ -545,7 +547,7 @@ function hasClass(element: HTMLElement, className: string): boolean {
   return element.className.split(/\s+/).includes(className);
 }
 
-function text(tag: "h2" | "span", className: string, value: string): HTMLElement {
+function text(tag: "span", className: string, value: string): HTMLElement {
   const node = document.createElement(tag);
   node.className = className;
   node.textContent = value;

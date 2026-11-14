@@ -223,7 +223,7 @@ describe("redisplayTab", () => {
 });
 
 describe("playbackMix", () => {
-  it("bundles Volume with Mute, Chimes, and Noise gate", () => {
+  it("keeps Volume as its own slider and leaves the switches out", () => {
     const mix = playbackMix(
       satellite({
         volumes: [
@@ -243,12 +243,10 @@ describe("playbackMix", () => {
     );
     assert.deepEqual(mix, {
       volume: { source: "number", entityId: "number.volume", min: 0, max: 100, step: 1, value: 67 },
-      switches: [
-        { entityId: "switch.mute", name: "Mute", on: false },
-        { entityId: "switch.chimes", name: "Chimes", on: true },
-        { entityId: "switch.gate", name: "Noise gate", on: true },
-      ],
     });
+    assert.equal(JSON.stringify(mix).includes("Mute"), false);
+    assert.equal(JSON.stringify(mix).includes("Chimes"), false);
+    assert.equal(JSON.stringify(mix).includes("Noise gate"), false);
     assert.equal(playbackMix(satellite()), undefined);
   });
 });
