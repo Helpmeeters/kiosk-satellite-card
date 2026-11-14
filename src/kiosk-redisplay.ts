@@ -272,17 +272,22 @@ button.text {
   font-size: 1.25rem;
   line-height: 1.35;
 }
-.panel > .rd-alarms,
-.panel > .rd-timers,
-.panel > .rd-intercom,
-.panel > .rd-agent {
+.panel .rd-alarms,
+.panel .rd-timers,
+.panel .rd-intercom,
+.panel .rd-agent {
   margin: 0;
   padding: 0;
   border-top: 0;
 }
+.timers-host {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--divider-color, rgba(127, 127, 127, 0.35));
+}
 .tabs {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 4px;
   margin: 2px 10px 10px;
   padding: 6px;
@@ -309,6 +314,7 @@ button.text {
   letter-spacing: 0.01em;
   line-height: 1.15;
   text-align: center;
+  white-space: normal;
   cursor: pointer;
 }
 .tabs button svg {
@@ -350,20 +356,25 @@ const ICONS = {
   pause: "M6 5h4v14H6zm8 0h4v14h-4z",
   now: "M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z",
   alarms: "M12 22a2 2 0 0 0 2-2h-4a2 2 0 0 0 2 2zm6-6V11a7 7 0 0 0-5-6.71V4a2 2 0 1 0-4 0v.29A7 7 0 0 0 6 11v5l-2 2v1h16v-1l-2-2z",
-  timers: "M9 1h6v2H9V1zm3 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zm1-13h-2v6l4.2 2.5.9-1.4-3.1-1.8V7z",
   intercom: "M6.6 10.8a15 15 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.25 12 12 0 0 0 3.6.55 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1 12 12 0 0 0 .55 3.6 1 1 0 0 1-.25 1L6.6 10.8z",
   agent: "M3 9v6h4l5 5V4L7 9H3zm13.5 3a5 5 0 0 1-2.5 4.03V7.97A5 5 0 0 1 16.5 12zM14 3.23v2.06A7 7 0 0 1 19 12a7 7 0 0 1-5 6.71v2.06A9 9 0 0 0 21 12a9 9 0 0 0-7-8.77z",
 };
 
 const TABS = [
   { id: "now", label: "Now playing", icon: ICONS.now },
-  { id: "alarms", label: "Alarms", icon: ICONS.alarms },
-  { id: "timers", label: "Timers", icon: ICONS.timers },
+  { id: "alarms", label: "Alarms & Timers", icon: ICONS.alarms },
   { id: "intercom", label: "Intercom", icon: ICONS.intercom },
   { id: "agent", label: "Voice Agent", icon: ICONS.agent },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
+
+/** A remembered Timers selection lands on the combined Alarms & Timers panel. */
+function chosenTab(id: string): TabId {
+  if (id === "alarms" || id === "timers") return "alarms";
+  if (id === "intercom" || id === "agent" || id === "now") return id;
+  return "now";
+}
 
 function devicesFrom(hass: Hass): DeviceEntry[] {
   if (!hass.devices) return [];
@@ -526,6 +537,14 @@ class KioskRedisplay extends HTMLElement {
       panel.id = `rd-panel-${tab.id}`;
       panel.setAttribute("role", "tabpanel");
       panel.setAttribute("aria-label", tab.label);
+      if (tab.id === "alarms") {
+        const alarms = document.createElement("div");
+        alarms.dataset.part = "alarms-host";
+        const timers = document.createElement("div");
+        timers.className = "timers-host";
+        timers.dataset.part = "timers-host";
+        panel.append(alarms, timers);
+      }
       panels.append(panel);
     }
     const nav = document.createElement("nav");
@@ -552,16 +571,17 @@ class KioskRedisplay extends HTMLElement {
     return button;
   }
 
-  private showTab(id: TabId): void {
-    this.tab = id;
+  private showTab(id: string): void {
+    const selected = chosenTab(id);
+    this.tab = selected;
     for (const tab of TABS) {
       const panel = this.piece(`panel-${tab.id}`);
-      if (panel) panel.hidden = tab.id !== id;
+      if (panel) panel.hidden = tab.id !== selected;
       const button = this.shadowRoot?.querySelector(`.tabs button[data-tab="${tab.id}"]`);
       if (button instanceof HTMLButtonElement) {
-        const selected = tab.id === id;
-        button.setAttribute("aria-selected", selected ? "true" : "false");
-        button.tabIndex = selected ? 0 : -1;
+        const on = tab.id === selected;
+        button.setAttribute("aria-selected", on ? "true" : "false");
+        button.tabIndex = on ? 0 : -1;
       }
     }
   }
@@ -569,6 +589,11 @@ class KioskRedisplay extends HTMLElement {
   private clearPanels(): void {
     for (const tab of TABS) {
       if (tab.id === "now") continue;
+      if (tab.id === "alarms") {
+        this.piece("alarms-host")?.replaceChildren();
+        this.piece("timers-host")?.replaceChildren();
+        continue;
+      }
       this.piece(`panel-${tab.id}`)?.replaceChildren();
     }
   }
@@ -857,7 +882,7 @@ class KioskRedisplay extends HTMLElement {
   }
 
   private paintAlarms(): void {
-    const host = this.piece("panel-alarms");
+    const host = this.piece("alarms-host");
     const model = this.model;
     if (!host || !model) return;
     const view = buildRedisplayAlarms(model, this.alarmList);
@@ -902,7 +927,7 @@ class KioskRedisplay extends HTMLElement {
   }
 
   private paintTimers(): void {
-    const host = this.piece("panel-timers");
+    const host = this.piece("timers-host");
     const model = this.model;
     if (!host || !model) return;
     const view = buildTimers(model);
@@ -986,7 +1011,7 @@ if (!cardWindow.customCards.some((card) => card.type === "kiosk-redisplay")) {
   cardWindow.customCards.push({
     type: "kiosk-redisplay",
     name: "Kiosk Redisplay",
-    description: "Now playing, alarms, timers, intercom, and voice agent for an audio-only Kiosk Satellite.",
+    description: "Now playing, alarms and timers, intercom, and voice agent for an audio-only Kiosk Satellite.",
     preview: true,
   });
 }
