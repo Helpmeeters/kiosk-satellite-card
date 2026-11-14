@@ -76,7 +76,7 @@ const DAYS: ReadonlyArray<readonly [string, string]> = [
   ["sun", "Sun"],
 ];
 
-const RELEASE_MARKER = "kiosk-satellite-card@0.1.3";
+const RELEASE_MARKER = "kiosk-satellite-card@0.1.4";
 
 const CONFIG_FORM = {
   schema: [
@@ -292,6 +292,10 @@ input[type="text"] {
 .media-slot {
   width: 100%;
   min-width: 0;
+  --ha-card-background: transparent;
+  --ha-card-box-shadow: none;
+  --ha-card-border-width: 0px;
+  --ha-card-border-radius: 0px;
 }
 .media-slot > * {
   display: block;
@@ -559,6 +563,18 @@ interface LovelaceCardElement extends HTMLElement {
 
 interface LovelaceCardHelpers {
   createCardElement(config: { type: string; entity: string }): LovelaceCardElement | Promise<LovelaceCardElement>;
+}
+
+function flattenMediaChrome(card: HTMLElement): void {
+  const root = card.shadowRoot;
+  if (!root || root.querySelector("style[data-kiosk-flat]")) return;
+  const style = document.createElement("style");
+  style.dataset.kioskFlat = "";
+  style.textContent = [
+    "ha-card { background: transparent; box-shadow: none; border: none; border-radius: 0; }",
+    ".player { padding: 4px 0 0; }",
+  ].join("\n");
+  root.append(style);
 }
 
 function cardHelpersLoader(): (() => Promise<LovelaceCardHelpers>) | undefined {
@@ -1479,6 +1495,8 @@ class KioskSatelliteCard extends HTMLElement {
       if (this._hass) created.hass = this._hass;
       slot.replaceChildren(created);
       if (this._hass) created.hass = this._hass;
+      flattenMediaChrome(created);
+      queueMicrotask(() => flattenMediaChrome(created));
       this.mediaCard = created;
       this.mediaCardEntity = playerId;
     } catch {
