@@ -1,9 +1,9 @@
 {
   "name": "kiosk-satellite-card",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "private": true,
   "type": "module",
-  "description": "Helpmeet: Kiosk Satellite Card. A Lovelace card for one Kiosk Satellite.",
+  "description": "Helpmeet: Kiosk Satellite Card. A Lovelace control card and Kiosk Redisplay for one Kiosk Satellite.",
   "license": "MIT",
   "repository": {
     "type": "git",

@@ -1,6 +1,6 @@
 # Helpmeet: Kiosk Satellite Card
 
-A [HACS](https://hacs.xyz/) Lovelace card for one Kiosk Satellite. Pick the device. The card reads every entity on that ESPHome device, plus the Music Assistant player and favorite button paired from its assist satellite, and renders a control panel.
+A [HACS](https://hacs.xyz/) Lovelace plugin for one Kiosk Satellite. The control card reads every entity on that ESPHome device, plus the Music Assistant player and favorite button paired from its assist satellite, and renders a control panel. [Kiosk Redisplay](#kiosk-redisplay) is a display for a satellite that has no screen.
 
 The visual editor has one required field, labeled Kiosk satellite. It lists only devices whose manufacturer is `kiosk_satellite` and that have an `assist_satellite` entity. A Music Assistant speaker manufactured "Kiosk Satellite" is not that device.
 
@@ -44,6 +44,17 @@ Setting an alarm calls `script.kiosk_satellite_alarms` with `kiosk` set to the d
 **Device.** App and firmware updates with Install, restart app and restart device with confirmation, a remote admin link, and collapsed diagnostics.
 
 Notification, announce, intercom call, launch app, and open URL are not in the card.
+
+## Kiosk Redisplay
+
+A second card in the same plugin. Pick the same device. The face is the display for an audio-only satellite: artwork, the track, and transport, with the assist state, the next alarm, and a ringing alarm's Snooze and Stop. It draws that face from the device's Home Assistant entities. The Kiosk Satellite display itself does not run on a device without a screen, and this card does not load it.
+
+```yaml
+type: custom:kiosk-redisplay
+device: a78b06196d065fff7a9bf5c7331e0e5e
+```
+
+The device picker matches the control card. Previous, play, pause, and next call the paired player. Favorite, snooze, and stop press that device's buttons. The volume slider writes the device's Media volume. When that entity is absent, the slider writes the player's volume. A next timer, or a timer count when nothing is scheduled, sits under the controls. Progress advances from the player's reported position while it is playing.
 
 ## Install
 

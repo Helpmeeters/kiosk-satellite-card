@@ -18,6 +18,7 @@ import {
 } from "./model";
 import { batteryFillWidth, batteryMark } from "./battery";
 import { spansFullWidth, type ColumnRole } from "./layout";
+import "./kiosk-redisplay";
 
 interface Hass {
   states: Record<string, EntityState>;
@@ -77,7 +78,7 @@ const DAYS: ReadonlyArray<readonly [string, string]> = [
   ["sun", "Sun"],
 ];
 
-const RELEASE_MARKER = "kiosk-satellite-card@0.1.5";
+const RELEASE_MARKER = "kiosk-satellite-card@0.1.6";
 
 const CONFIG_FORM = {
   schema: [
