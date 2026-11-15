@@ -639,7 +639,9 @@ function svgRect(attrs: Record<string, string>): SVGRectElement {
   return node;
 }
 
-class KioskRedisplay extends HTMLElement {
+export class KioskRedisplay extends HTMLElement {
+  static releaseMarker = "";
+
   private deviceId?: string;
   private _hass?: Hass;
   private model?: SatelliteModel;
@@ -793,7 +795,8 @@ class KioskRedisplay extends HTMLElement {
     const style = document.createElement("style");
     style.textContent = CSS + redisplayAlarmsCss + timersCss + intercomCss + agentCss + deviceCss + powerCss;
     const card = document.createElement("ha-card");
-    card.dataset.card = "kiosk-redisplay";
+    card.dataset.card = "kiosk-satellite-card";
+    card.dataset.release = KioskRedisplay.releaseMarker;
     const header = document.createElement("header");
     header.className = "title-row";
     header.addEventListener("keydown", (event) => {
@@ -845,7 +848,7 @@ class KioskRedisplay extends HTMLElement {
     const nav = document.createElement("nav");
     nav.className = "tabs";
     nav.setAttribute("role", "tablist");
-    nav.setAttribute("aria-label", "Kiosk Redisplay");
+    nav.setAttribute("aria-label", "Kiosk Satellite Card");
     for (const tab of TABS) nav.append(this.tabButton(tab));
     card.addEventListener("click", (event) => {
       const path = event.composedPath();
@@ -1642,19 +1645,4 @@ class KioskRedisplay extends HTMLElement {
     const node = this.piece(name);
     if (node) node.hidden = hidden;
   }
-}
-
-if (!customElements.get("kiosk-redisplay")) {
-  customElements.define("kiosk-redisplay", KioskRedisplay);
-}
-
-const cardWindow = window as unknown as { customCards?: Array<Record<string, unknown>> };
-cardWindow.customCards = cardWindow.customCards || [];
-if (!cardWindow.customCards.some((card) => card.type === "kiosk-redisplay")) {
-  cardWindow.customCards.push({
-    type: "kiosk-redisplay",
-    name: "Kiosk Redisplay",
-    description: "Now playing, alarms and timers, intercom, and voice agent for an audio-only Kiosk Satellite.",
-    preview: true,
-  });
 }

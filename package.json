@@ -1,9 +1,9 @@
 {
   "name": "kiosk-satellite-card",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "private": true,
   "type": "module",
-  "description": "Helpmeet: Kiosk Satellite Card. A Lovelace control card and Kiosk Redisplay for one Kiosk Satellite.",
+  "description": "Helpmeet: Kiosk Satellite Card. The tabbed display for one audio-only Kiosk Satellite.",
   "license": "MIT",
   "repository": {
     "type": "git",

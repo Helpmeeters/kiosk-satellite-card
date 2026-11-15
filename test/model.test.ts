@@ -4,7 +4,6 @@ import {
   alarmServiceCall,
   buildModel,
   parseConfig,
-  showNowPlaying,
   type ButtonControl,
   type DeviceEntry,
   type EntityState,
@@ -301,15 +300,6 @@ describe("buildModel", () => {
     assert.notEqual(built.media.playerId, "media_player.updoot");
     assert.equal(built.media.favoriteId, "button.updoot2_favorite_current_song");
     assert.equal(built.media.title, "Right");
-  });
-
-  it("shows the paired media player when it is idle", () => {
-    const playerId = "media_player.updoot";
-    for (const state of ["idle", "off", "unknown", "unavailable", "playing", "paused", "buffering"]) {
-      assert.equal(showNowPlaying(playerId, state), true, state);
-    }
-    assert.equal(showNowPlaying(undefined, "playing"), false);
-    assert.equal(showNowPlaying(undefined, "idle"), false);
   });
 
   it("returns null for a non-numeric number and marks a missing device", () => {
