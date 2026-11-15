@@ -138,6 +138,14 @@ function absentAnswer() {
   };
 }
 
+function absentDisturb() {
+  return {
+    name: "Intercom do not disturb",
+    on: false,
+    disabled: true,
+  };
+}
+
 function render(parent: El, view: IntercomView | undefined, onSwitch: IntercomSwitchChange = () => undefined): void {
   renderIntercom(parent as unknown as HTMLElement, view, onSwitch);
 }
@@ -197,6 +205,7 @@ describe("buildIntercom", () => {
         value: "Ring",
         disabled: false,
       },
+      doNotDisturb: absentDisturb(),
     });
   });
 
@@ -239,6 +248,7 @@ describe("buildIntercom", () => {
     assert.deepEqual(view, {
       switches: [{ entityId: "switch.enabled", name: "Intercom enabled", on: false }],
       answer: absentAnswer(),
+      doNotDisturb: absentDisturb(),
     });
     assert.equal(view?.volume, undefined);
   });
@@ -269,6 +279,7 @@ describe("buildIntercom", () => {
         value: 60,
       },
       answer: absentAnswer(),
+      doNotDisturb: absentDisturb(),
     });
   });
 
@@ -283,11 +294,14 @@ describe("buildIntercom", () => {
       }),
     );
     assert.deepEqual(view, {
-      switches: [
-        { entityId: "switch.enabled", name: "  Intercom enabled  ", on: true },
-        { entityId: "switch.dnd", name: "Intercom do not disturb", on: false },
-      ],
+      switches: [{ entityId: "switch.enabled", name: "  Intercom enabled  ", on: true }],
       answer: absentAnswer(),
+      doNotDisturb: {
+        entityId: "switch.dnd",
+        name: "Intercom do not disturb",
+        on: false,
+        disabled: false,
+      },
     });
   });
 
@@ -298,8 +312,14 @@ describe("buildIntercom", () => {
       }),
     );
     assert.deepEqual(view, {
-      switches: [{ entityId: "switch.dnd", name: "INTERCOM DO NOT DISTURB", on: true }],
+      switches: [],
       answer: absentAnswer(),
+      doNotDisturb: {
+        entityId: "switch.dnd",
+        name: "INTERCOM DO NOT DISTURB",
+        on: true,
+        disabled: false,
+      },
     });
   });
 
@@ -312,7 +332,34 @@ describe("buildIntercom", () => {
     assert.deepEqual(view, {
       switches: [{ entityId: "switch.enabled", name: "Intercom enabled", on: false }],
       answer: absentAnswer(),
+      doNotDisturb: absentDisturb(),
     });
+  });
+
+  it("uses a settings do not disturb switch when the voice list does not have it", () => {
+    const view = buildIntercom(
+      satellite({
+        settings: [{ entityId: "switch.dnd", name: "Intercom do not disturb", on: true }],
+      }),
+    );
+    assert.deepEqual(view?.doNotDisturb, {
+      entityId: "switch.dnd",
+      name: "Intercom do not disturb",
+      on: true,
+      disabled: false,
+    });
+  });
+
+  it("prefers the voice do not disturb switch over a settings switch of the same name", () => {
+    const view = buildIntercom(
+      satellite({
+        voiceSwitches: [{ entityId: "switch.voice", name: "Intercom do not disturb", on: false }],
+        settings: [{ entityId: "switch.settings", name: "Intercom do not disturb", on: true }],
+      }),
+    );
+    assert.equal(view?.doNotDisturb?.entityId, "switch.voice");
+    assert.equal(view?.doNotDisturb?.on, false);
+    assert.equal(view?.doNotDisturb?.disabled, false);
   });
 
   it("prefers the voice switch over a settings switch of the same name", () => {
@@ -341,10 +388,13 @@ describe("renderIntercom", () => {
   it("shows the switch names and On or Off in large rows", () => {
     const parent = host();
     render(parent, {
-      switches: [
-        { entityId: "switch.enabled", name: "Intercom enabled", on: true },
-        { entityId: "switch.dnd", name: "Intercom do not disturb", on: false },
-      ],
+      switches: [{ entityId: "switch.enabled", name: "Intercom enabled", on: true }],
+      doNotDisturb: {
+        entityId: "switch.dnd",
+        name: "Intercom do not disturb",
+        on: false,
+        disabled: false,
+      },
     });
     const section = parent.querySelector(".rd-intercom");
     assert.equal(section?.tagName, "SECTION");
@@ -372,10 +422,13 @@ describe("renderIntercom", () => {
       calls.push([domain, service, data, target]);
     };
     render(parent, {
-      switches: [
-        { entityId: "switch.enabled", name: "Intercom enabled", on: true },
-        { entityId: "switch.dnd", name: "Intercom do not disturb", on: false },
-      ],
+      switches: [{ entityId: "switch.enabled", name: "Intercom enabled", on: true }],
+      doNotDisturb: {
+        entityId: "switch.dnd",
+        name: "Intercom do not disturb",
+        on: false,
+        disabled: false,
+      },
     }, onSwitch);
     const buttons = parent.querySelectorAll(".rd-intercom-switch");
     buttons[1]?.click();
@@ -399,10 +452,13 @@ describe("renderIntercom", () => {
     renderIntercom(
       parent as unknown as HTMLElement,
       {
-        switches: [
-          { entityId: "switch.enabled", name: "Intercom enabled", on: true },
-          { entityId: "switch.dnd", name: "Intercom do not disturb", on: false },
-        ],
+        switches: [{ entityId: "switch.enabled", name: "Intercom enabled", on: true }],
+        doNotDisturb: {
+          entityId: "switch.dnd",
+          name: "Intercom do not disturb",
+          on: false,
+          disabled: false,
+        },
         answer: {
           entityId: "select.answer",
           name: "Intercom answer mode",
@@ -473,6 +529,37 @@ describe("renderIntercom", () => {
     assert.equal(parent.querySelectorAll(".rd-intercom-switch").length, 1);
     assert.equal(parent.querySelector(".rd-intercom-volume"), null);
   });
+
+  it("renders do not disturb disabled and off, and ignores clicks, when the switch is absent", () => {
+    const parent = host();
+    const calls: Array<Parameters<IntercomSwitchChange>> = [];
+    const view = buildIntercom(
+      satellite({
+        voiceSwitches: [{ entityId: "switch.enabled", name: "Intercom enabled", on: true }],
+      }),
+    );
+    render(parent, view, (domain, service, data, target) => {
+      calls.push([domain, service, data, target]);
+    });
+    const section = parent.querySelector(".rd-intercom");
+    assert.deepEqual(
+      section?.children.map((child) => child.tagName),
+      ["BUTTON", "LABEL", "BUTTON"],
+    );
+    const dnd = parent.querySelectorAll(".rd-intercom-switch")[1];
+    assert.equal(dnd?.querySelector(".rd-intercom-name")?.textContent, "Intercom do not disturb");
+    assert.equal(dnd?.querySelector(".rd-intercom-value")?.textContent, "Off");
+    assert.equal(dnd?.getAttribute("aria-checked"), "false");
+    assert.equal(dnd?.getAttribute("aria-label"), "Intercom do not disturb");
+    assert.equal(dnd?.getAttribute("role"), "switch");
+    assert.equal(dnd?.disabled, true);
+    assert.equal(dnd?.dataset.entity, undefined);
+    assert.equal(dnd?.className.includes("rd-intercom-switch-on"), false);
+    dnd?.click();
+    assert.deepEqual(calls, []);
+    assert.equal(dnd?.getAttribute("aria-checked"), "false");
+    assert.equal(dnd?.querySelector(".rd-intercom-value")?.textContent, "Off");
+  });
 });
 
 describe("intercomCss", () => {
@@ -487,6 +574,8 @@ describe("intercomCss", () => {
     }
     assert.equal(intercomCss.includes("grid-template-columns"), false);
     assert.match(intercomCss, /\.rd-intercom\s*\{[^}]*padding:\s*16px 16px 18px;/);
+    assert.match(intercomCss, /\.rd-intercom-switch:disabled\s*\{[^}]*cursor:\s*default;/);
+    assert.match(intercomCss, /\.rd-intercom-switch:disabled\s*\{[^}]*opacity:\s*0\.45;/);
     for (const token of ["--primary-text-color", "--secondary-text-color", "--primary-color"]) {
       assert.equal(intercomCss.includes(`var(${token})`), true);
     }

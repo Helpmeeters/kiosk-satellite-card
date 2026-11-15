@@ -120,7 +120,7 @@ describe("buildDevice", () => {
     );
   });
 
-  it("keeps updates, confirmable restarts, the admin link, and diagnostics", () => {
+  it("keeps updates, other buttons, and diagnostics, and leaves the power menu out", () => {
     const view = buildDevice(
       satellite({
         updates: [{ entityId: "update.app", name: "Update", state: "on", installed: "1", latest: "2", title: "App" }],
@@ -134,14 +134,28 @@ describe("buildDevice", () => {
       }),
     );
     assert.equal(view?.updates[0]?.title, "App");
-    assert.equal(view?.actions[0]?.confirm, true);
-    assert.equal(view?.actions[2]?.confirm, false);
-    assert.equal(view?.remoteAdmin, "https://example.test/admin");
+    assert.deepEqual(view?.actions, [{ entityId: "button.other", name: "Identify", confirm: false }]);
     assert.equal(view?.diagnostics[0]?.name, "Battery");
-    assert.deepEqual(view?.switches, []);
+    assert.equal(JSON.stringify(view).includes("Restart"), false);
+    assert.equal(JSON.stringify(view).includes("example.test"), false);
   });
 
-  it("puts Chimes and Noise gate on the device and leaves the other switches out", () => {
+  it("omits the section when only the power menu actions are present", () => {
+    assert.equal(
+      buildDevice(
+        satellite({
+          actions: [
+            { entityId: "button.restart_app", name: "Restart app", confirm: true },
+            { entityId: "button.restart_device", name: "Restart device", confirm: true },
+          ],
+          remoteAdmin: "https://example.test/admin",
+        }),
+      ),
+      undefined,
+    );
+  });
+
+  it("leaves Chimes and Noise gate off the device", () => {
     const view = buildDevice(
       satellite({
         voiceSwitches: [
@@ -151,14 +165,12 @@ describe("buildDevice", () => {
           { entityId: "switch.stop", name: "Stop word", on: true },
           { entityId: "switch.timers", name: "Mute timers", on: false },
         ],
+        diagnostics: [{ entityId: "sensor.ip", name: "IPv4 address", state: "192.168.0.87" }],
       }),
     );
-    assert.deepEqual(view?.switches, [
-      { entityId: "switch.chimes", name: "VS Chimes", on: true },
-      { entityId: "switch.gate", name: "Noise gate", on: false },
-    ]);
+    assert.equal(JSON.stringify(view).includes("Chimes"), false);
+    assert.equal(JSON.stringify(view).includes("Noise gate"), false);
     assert.equal(JSON.stringify(view).includes("Mute"), false);
-    assert.equal(JSON.stringify(view).includes("Stop word"), false);
   });
 });
 
@@ -196,7 +208,6 @@ describe("renderDevice", () => {
       handlers: {
         onInstall: (entityId) => calls.push(`install:${entityId}`),
         onPress: (entityId, confirm, name) => calls.push(`press:${entityId}:${confirm}:${name}`),
-        onSwitch: (entityId, on) => calls.push(`switch:${entityId}:${on}`),
       },
     };
   };
@@ -215,7 +226,7 @@ describe("renderDevice", () => {
     ) as DeviceView;
   }
 
-  it("shows Install, asks before restart, and keeps diagnostics collapsed", () => {
+  it("shows Install, keeps diagnostics collapsed, and leaves restart and admin out", () => {
     const parent = new El("div");
     const { calls, handlers: on } = handlers();
     renderDevice(parent as unknown as HTMLElement, view(), on);
@@ -223,19 +234,15 @@ describe("renderDevice", () => {
     assert.equal(parent.querySelector(".rd-device-label"), null);
     assert.equal(parent.querySelector(".rd-device-install")?.hidden, false);
     assert.equal(parent.querySelector(".rd-device-installed")?.textContent, "Installed 1.0");
-    assert.equal(parent.querySelector(".rd-device-link")?.getAttribute("href"), "https://example.test/admin");
-    assert.equal(parent.querySelector(".rd-device-link")?.getAttribute("target"), "_blank");
+    assert.equal(parent.querySelector(".rd-device-link"), null);
     assert.equal(parent.querySelector("details")?.open, false);
     assert.equal(parent.querySelector(".rd-device-value")?.textContent, "192.168.0.87");
+    assert.equal(parent.textContent.includes("Restart app"), false);
+    assert.equal(parent.textContent.includes("example.test"), false);
 
     parent.querySelector(".rd-device-install")?.click();
-    parent.querySelectorAll(".rd-device-action")[0]?.click();
-    parent.querySelectorAll(".rd-device-action")[1]?.click();
-    assert.deepEqual(calls, [
-      "install:update.app",
-      "press:button.restart_app:true:Restart app",
-      "press:button.other:false:Identify",
-    ]);
+    parent.querySelector(".rd-device-action")?.click();
+    assert.deepEqual(calls, ["install:update.app", "press:button.other:false:Identify"]);
   });
 
   it("hides Install when the update is not available and keeps the diagnostics element", () => {

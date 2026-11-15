@@ -1,57 +1,34 @@
 import type { ButtonControl, SatelliteModel, SensorLine, UpdateControl } from "./model";
 
-export interface DeviceSwitchView {
-  entityId: string;
-  name: string;
-  on: boolean;
-}
-
 export interface DeviceView {
-  /** Chimes, then Noise gate. Mute and the other voice switches stay out. */
-  switches: DeviceSwitchView[];
   updates: UpdateControl[];
+  /** Device buttons other than Restart app and Restart device. Those sit on the power menu. */
   actions: ButtonControl[];
-  remoteAdmin?: string;
   diagnostics: SensorLine[];
 }
 
 export interface DeviceHandlers {
   /** update.install for one update entity. */
   onInstall: (entityId: string) => void;
-  /** button.press. `confirm` is true for Restart app and Restart device. */
+  /** button.press for a device button that stays on this panel. */
   onPress: (entityId: string, confirm: boolean, name: string) => void;
-  /** switch.turn_on or switch.turn_off for Chimes and Noise gate. */
-  onSwitch: (entityId: string, on: boolean) => void;
 }
 
-const DEVICE_SWITCHES = ["chimes", "noise gate"] as const;
+const POWER_ACTIONS = new Set(["restart app", "restart device"]);
 
 /**
- * The control card's Device section: Chimes, Noise gate, updates, device buttons,
- * the remote admin link, and diagnostics. Light stays out. Undefined when the device has none of these.
+ * The Device panel: updates, device buttons other than the power-menu restarts,
+ * and diagnostics. Chimes, Noise gate, Restart app, Restart device, and Device admin stay out.
+ * Undefined when the device has none of these.
  */
 export function buildDevice(model: SatelliteModel): DeviceView | undefined {
-  const switches = DEVICE_SWITCHES.flatMap((name) => {
-    const found = model.voiceSwitches.find((item) => normalize(item.name) === name);
-    return found ? [{ entityId: found.entityId, name: found.name, on: found.on }] : [];
-  });
-  if (
-    switches.length === 0 &&
-    model.updates.length === 0 &&
-    model.actions.length === 0 &&
-    !model.remoteAdmin &&
-    model.diagnostics.length === 0
-  ) {
-    return undefined;
-  }
-  const view: DeviceView = {
-    switches,
+  const actions = model.actions.filter((action) => !POWER_ACTIONS.has(normalize(action.name)));
+  if (actions.length === 0 && model.updates.length === 0 && model.diagnostics.length === 0) return undefined;
+  return {
     updates: model.updates.map((update) => ({ ...update })),
-    actions: model.actions.map((action) => ({ ...action })),
+    actions: actions.map((action) => ({ ...action })),
     diagnostics: model.diagnostics.map((line) => ({ ...line })),
   };
-  if (model.remoteAdmin) view.remoteAdmin = model.remoteAdmin;
-  return view;
 }
 
 export const deviceCss = `
@@ -62,45 +39,6 @@ export const deviceCss = `
   gap: 14px;
   padding: 16px 16px 18px;
   color: var(--primary-text-color);
-}
-.rd-device-switch-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  min-height: 36px;
-}
-.rd-device-switch-label {
-  font-size: 1.05rem;
-  line-height: 1.3;
-}
-.rd-device-switch {
-  position: relative;
-  flex: 0 0 auto;
-  width: 52px;
-  height: 32px;
-  padding: 0;
-  border: 0;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--primary-text-color) 16%, transparent);
-  color: inherit;
-  cursor: pointer;
-}
-.rd-device-switch-on {
-  background: var(--primary-color);
-}
-.rd-device-switch-knob {
-  position: absolute;
-  top: 4px;
-  left: 4px;
-  width: 24px;
-  height: 24px;
-  border-radius: 999px;
-  background: var(--ha-card-background, var(--card-background-color, Canvas));
-  transition: transform 160ms ease;
-}
-.rd-device-switch-on .rd-device-switch-knob {
-  transform: translateX(20px);
 }
 .rd-device-update {
   display: flex;
@@ -152,12 +90,6 @@ export const deviceCss = `
   flex-wrap: wrap;
   gap: 8px;
 }
-.rd-device-link {
-  color: var(--primary-color);
-  font-size: 1.05rem;
-  font-weight: 500;
-  line-height: 1.3;
-}
 .rd-device-diagnostics {
   border-top: 1px solid var(--divider-color, rgba(127, 127, 127, 0.35));
   padding-top: 10px;
@@ -208,10 +140,8 @@ export function renderDevice(parent: HTMLElement, view: DeviceView | undefined, 
 
 function structureKey(view: DeviceView): string {
   return [
-    view.switches.map((item) => item.entityId).join(","),
     view.updates.map((update) => update.entityId).join(","),
     view.actions.map((action) => `${action.entityId}:${action.confirm ? "1" : "0"}`).join(","),
-    view.remoteAdmin ? "link" : "",
     view.diagnostics.map((line) => line.entityId).join(","),
   ].join("|");
 }
@@ -219,23 +149,17 @@ function structureKey(view: DeviceView): string {
 function createSection(view: DeviceView, handlers: DeviceHandlers): HTMLElement {
   const root = el("section", "rd-device");
   root.setAttribute("aria-label", "Device");
-  for (const item of view.switches) root.append(switchRow(item, handlers));
   for (const update of view.updates) root.append(updateRow(update, handlers));
   if (view.actions.length > 0) {
     const actions = el("div", "rd-device-actions");
     for (const action of view.actions) actions.append(actionButton(action, handlers));
     root.append(actions);
   }
-  if (view.remoteAdmin) root.append(adminLink(view.remoteAdmin));
   if (view.diagnostics.length > 0) root.append(diagnostics(view.diagnostics));
   return root;
 }
 
 function patchSection(root: HTMLElement, view: DeviceView): void {
-  for (const item of view.switches) {
-    const button = byEntity(root, item.entityId);
-    if (button) paintSwitch(button, item.on);
-  }
   for (const update of view.updates) {
     const row = byEntity(root, update.entityId);
     if (!row) continue;
@@ -265,43 +189,12 @@ function patchSection(root: HTMLElement, view: DeviceView): void {
     if (button.textContent !== action.name) button.textContent = action.name;
     button.setAttribute("data-confirm", action.confirm ? "true" : "false");
   }
-  const link = findClass(root, "rd-device-link");
-  if (link && view.remoteAdmin && link.getAttribute("href") !== view.remoteAdmin) {
-    link.setAttribute("href", view.remoteAdmin);
-  }
   for (const line of view.diagnostics) {
     const row = byEntity(root, line.entityId);
     if (!row) continue;
     setText(row, "rd-device-name", line.name);
     setText(row, "rd-device-value", formatLine(line));
   }
-}
-
-function switchRow(item: DeviceSwitchView, handlers: DeviceHandlers): HTMLElement {
-  const row = el("div", "rd-device-switch-row");
-  const label = text("span", "rd-device-switch-label", item.name);
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "rd-device-switch";
-  button.setAttribute("data-entity", item.entityId);
-  button.setAttribute("role", "switch");
-  button.setAttribute("aria-label", item.name);
-  const knob = document.createElement("span");
-  knob.className = "rd-device-switch-knob";
-  button.append(knob);
-  paintSwitch(button, item.on);
-  button.addEventListener("click", () => {
-    const on = button.getAttribute("aria-checked") !== "true";
-    paintSwitch(button, on);
-    handlers.onSwitch(item.entityId, on);
-  });
-  row.append(label, button);
-  return row;
-}
-
-function paintSwitch(button: HTMLElement, on: boolean): void {
-  button.className = on ? "rd-device-switch rd-device-switch-on" : "rd-device-switch";
-  button.setAttribute("aria-checked", on ? "true" : "false");
 }
 
 function updateRow(update: UpdateControl, handlers: DeviceHandlers): HTMLElement {
@@ -336,19 +229,6 @@ function actionButton(action: ButtonControl, handlers: DeviceHandlers): HTMLButt
   button.setAttribute("data-confirm", action.confirm ? "true" : "false");
   button.addEventListener("click", () => handlers.onPress(action.entityId, action.confirm, action.name));
   return button;
-}
-
-function adminLink(href: string): HTMLAnchorElement {
-  const link = document.createElement("a");
-  link.className = "rd-device-link";
-  link.textContent = "Remote admin";
-  link.href = href;
-  link.target = "_blank";
-  link.rel = "noopener noreferrer";
-  link.setAttribute("href", href);
-  link.setAttribute("target", "_blank");
-  link.setAttribute("rel", "noopener noreferrer");
-  return link;
 }
 
 function diagnostics(lines: readonly SensorLine[]): HTMLElement {

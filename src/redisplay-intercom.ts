@@ -1,7 +1,9 @@
 import type { SatelliteModel, SelectControl, SwitchControl, VolumeControl } from "./model";
 import { formatVolumeReadout } from "./redisplay";
 
-const INTERCOM_SWITCHES = ["intercom enabled", "intercom do not disturb"] as const;
+const ENABLED = "intercom enabled";
+const DISTURB = "intercom do not disturb";
+const DISTURB_LABEL = "Intercom do not disturb";
 const ANSWER_MODE = "intercom answer mode";
 const ANSWER_LABEL = "Intercom answer mode";
 
@@ -30,6 +32,15 @@ export interface IntercomAnswerView {
   disabled: boolean;
 }
 
+export interface IntercomDisturbView {
+  /** Missing when the switch is not in the registry. */
+  entityId?: string;
+  name: string;
+  /** False when the switch is absent. */
+  on: boolean;
+  disabled: boolean;
+}
+
 export interface IntercomView {
   switches: IntercomSwitchView[];
   /** Intercom volume, drawn like the Media volume slider. */
@@ -39,6 +50,11 @@ export interface IntercomView {
    * Disabled, with no selection, when the select entity is absent.
    */
   answer?: IntercomAnswerView;
+  /**
+   * Intercom do not disturb. Set whenever the section is shown.
+   * Disabled and off when the switch entity is absent.
+   */
+  doNotDisturb?: IntercomDisturbView;
 }
 
 /**
@@ -68,18 +84,22 @@ export type IntercomSelectChange = (
 /**
  * Intercom enabled, Intercom answer mode, Intercom do not disturb, and Intercom volume.
  * Answer mode stays on the tab when its select is absent: disabled, with no selection.
- * Do not disturb and Intercom volume stay off the tab until those entities exist.
+ * Do not disturb stays on the tab when its switch is absent: disabled and off.
+ * Intercom volume stays off the tab until that entity exists.
  * The Intercom and Intercom kiosk text sensors are not on SatelliteModel, so there is no call state.
  */
 export function buildIntercom(model: SatelliteModel): IntercomView | undefined {
-  const switches = INTERCOM_SWITCHES.flatMap((name) => {
-    const found = findSwitch(model, name);
-    return found ? [{ entityId: found.entityId, name: found.name, on: found.on }] : [];
-  });
+  const enabled = findSwitch(model, ENABLED);
+  const switches = enabled ? [{ entityId: enabled.entityId, name: enabled.name, on: enabled.on }] : [];
   const volume = model.volumes.find((item) => normalize(item.name) === "intercom volume");
   const answer = findAnswer(model);
-  if (switches.length === 0 && !volume && !answer) return undefined;
-  const view: IntercomView = { switches, answer: answer ?? absentAnswer() };
+  const disturb = findDisturb(model);
+  if (switches.length === 0 && !volume && !answer && !disturb) return undefined;
+  const view: IntercomView = {
+    switches,
+    answer: answer ?? absentAnswer(),
+    doNotDisturb: disturb ?? absentDisturb(),
+  };
   if (volume) view.volume = volumeView(volume);
   return view;
 }
@@ -112,6 +132,10 @@ export const intercomCss = `
 .rd-intercom-switch:focus-visible {
   outline: 2px solid var(--primary-color);
   outline-offset: 2px;
+}
+.rd-intercom-switch:disabled {
+  cursor: default;
+  opacity: 0.45;
 }
 .rd-intercom-switch-on {
   background: color-mix(in srgb, var(--primary-color) 16%, transparent);
@@ -215,17 +239,18 @@ export function renderIntercom(
   onVolume?: IntercomVolumeChange,
   onSelect?: IntercomSelectChange,
 ): void {
-  if (!view || (view.switches.length === 0 && !view.volume && !view.answer)) {
+  if (!view || (view.switches.length === 0 && !view.volume && !view.answer && !view.doNotDisturb)) {
     parent.replaceChildren();
     return;
   }
   const root = document.createElement("section");
   root.className = "rd-intercom";
   root.setAttribute("aria-label", "Intercom");
-  const enabled = view.switches.find((item) => normalize(item.name) === "intercom enabled");
+  const enabled = view.switches.find((item) => normalize(item.name) === ENABLED);
   const rest = view.switches.filter((item) => item !== enabled);
   if (enabled) root.append(switchButton(enabled, onSwitch));
   if (view.answer) root.append(answerField(view.answer, onSelect));
+  if (view.doNotDisturb) root.append(disturbButton(view.doNotDisturb, onSwitch));
   for (const item of rest) root.append(switchButton(item, onSwitch));
   if (view.volume) root.append(volumeRow(view.volume, onVolume));
   parent.replaceChildren(root);
@@ -268,6 +293,16 @@ function volumeRow(volume: IntercomVolumeView, onVolume: IntercomVolumeChange | 
 
 function absentAnswer(): IntercomAnswerView {
   return { name: ANSWER_LABEL, options: [], value: "", disabled: true };
+}
+
+function absentDisturb(): IntercomDisturbView {
+  return { name: DISTURB_LABEL, on: false, disabled: true };
+}
+
+function findDisturb(model: SatelliteModel): IntercomDisturbView | undefined {
+  const found = findSwitch(model, DISTURB);
+  if (!found) return undefined;
+  return { entityId: found.entityId, name: found.name, on: found.on, disabled: false };
 }
 
 function findAnswer(model: SatelliteModel): IntercomAnswerView | undefined {
@@ -365,6 +400,21 @@ function text(tag: "p" | "span", className: string, value: string): HTMLElement 
   node.className = className;
   node.textContent = value;
   return node;
+}
+
+function disturbButton(item: IntercomDisturbView, onSwitch: IntercomSwitchChange): HTMLButtonElement {
+  if (!item.disabled && item.entityId) {
+    return switchButton({ entityId: item.entityId, name: item.name, on: item.on }, onSwitch);
+  }
+  const button = document.createElement("button");
+  button.type = "button";
+  button.disabled = true;
+  button.className = "rd-intercom-switch";
+  button.setAttribute("role", "switch");
+  button.setAttribute("aria-label", DISTURB_LABEL);
+  button.setAttribute("aria-checked", "false");
+  button.append(text("span", "rd-intercom-name", DISTURB_LABEL), text("span", "rd-intercom-value", "Off"));
+  return button;
 }
 
 function switchButton(item: IntercomSwitchView, onSwitch: IntercomSwitchChange): HTMLButtonElement {

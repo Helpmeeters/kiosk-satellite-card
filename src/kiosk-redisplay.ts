@@ -1,4 +1,12 @@
 import { batteryFillWidth, batteryMark } from "./battery";
+import {
+  tabFromUserData,
+  updatesPending,
+  userDataGet,
+  userDataSet,
+  voiceMute,
+  type StoredTab,
+} from "./redisplay-header";
 import { buildModel, parseConfig, type DeviceEntry, type EntityState, type RegistryEntry, type SatelliteModel } from "./model";
 import {
   buildRedisplay,
@@ -10,6 +18,7 @@ import {
   type PlayerSnapshot,
   type RedisplayView,
 } from "./redisplay";
+import { popupSurfaceCss } from "./redisplay-popup";
 import {
   alarmListFromFailure,
   alarmListFromPayload,
@@ -21,8 +30,9 @@ import {
   type AlarmScriptExtra,
   type RedisplayAlarmList,
 } from "./redisplay-alarms";
-import { agentCss, buildAgent, renderAgent } from "./redisplay-agent";
+import { agentCss, agentHasPanel, buildAgent, renderAgent } from "./redisplay-agent";
 import { buildDevice, deviceCss, renderDevice } from "./redisplay-device";
+import { buildPower, powerCss, renderPower } from "./redisplay-power";
 import { buildIntercom, intercomCss, renderIntercom } from "./redisplay-intercom";
 import { assistStem, buildTimers, renderTimers, timerStartService, timersCss, type TimerStart } from "./redisplay-timers";
 
@@ -38,6 +48,8 @@ interface Hass {
     target?: Record<string, unknown>,
     returnResponse?: boolean,
   ) => Promise<unknown>;
+  /** Home Assistant websocket. Optional so a stub hass still typechecks. */
+  callWS?: (message: Record<string, unknown>) => Promise<unknown>;
 }
 
 const CONFIG_FORM = {
@@ -115,6 +127,9 @@ ha-card {
 }
 .name {
   margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 1.25rem;
   font-weight: 500;
   line-height: 1.2;
@@ -154,14 +169,25 @@ ha-card {
   gap: 8px;
 }
 .stage {
-  display: flow-root;
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  column-gap: 14px;
+  align-items: start;
+}
+.stage > .art,
+.stage > .placeholder {
+  grid-column: 1;
+  grid-row: 1 / span 8;
+  width: 112px;
+  height: 112px;
+  margin: 0;
+}
+.stage > :not(.art):not(.placeholder) {
+  grid-column: 2;
+  min-width: 0;
 }
 .art,
 .placeholder {
-  float: left;
-  width: 112px;
-  height: 112px;
-  margin: 0 14px 8px 0;
   border-radius: 12px;
   background: color-mix(in srgb, var(--primary-text-color) 8%, transparent);
 }
@@ -254,7 +280,6 @@ button.text {
   grid-template-columns: auto 1fr auto;
   gap: 10px;
   align-items: center;
-  clear: both;
   margin-top: 4px;
 }
 .volume input {
@@ -268,20 +293,25 @@ button.text {
   color: var(--secondary-text-color);
 }
 .title-row {
+  position: relative;
+  z-index: 3;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   padding: 12px 16px 0;
 }
+.title-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
 .title-copy {
   min-width: 0;
 }
-.subtitle {
-  margin: 2px 0 0;
-  color: var(--secondary-text-color);
-  font-size: 0.95rem;
-  line-height: 1.3;
+.title-power {
+  flex: 0 0 auto;
 }
 .battery {
   flex: 0 0 auto;
@@ -345,9 +375,9 @@ button.text {
 }
 .tabs {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 4px;
-  margin: 2px 10px 10px;
+  margin: 8px 10px 0;
   padding: 6px;
   border-radius: 22px;
   background: color-mix(in srgb, var(--primary-text-color) 7%, transparent);
@@ -392,6 +422,117 @@ button.text {
   outline: 2px solid var(--primary-color);
   outline-offset: -2px;
 }
+.rd-master,
+.rd-info {
+  position: relative;
+  flex: 0 0 auto;
+}
+.rd-master-trigger,
+.rd-mute,
+.rd-info-button {
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--primary-text-color);
+  cursor: pointer;
+  font: inherit;
+}
+.rd-master-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 2px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.rd-mute,
+.rd-info-button {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+}
+.rd-master-trigger svg,
+.rd-mute svg,
+.rd-info-button svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+.rd-master-percent {
+  white-space: nowrap;
+}
+.rd-master-trigger[aria-expanded="true"],
+.rd-info-button[aria-expanded="true"] {
+  background: color-mix(in srgb, var(--primary-text-color) 12%, transparent);
+}
+.rd-master-trigger:focus-visible,
+.rd-mute:focus-visible,
+.rd-info-button:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+.rd-mute.is-muted {
+  color: var(--error-color, #ba1a1a);
+  background: color-mix(in srgb, var(--error-color, #ba1a1a) 16%, transparent);
+}
+.rd-info-button.is-update,
+.rd-info-button.is-update[aria-expanded="true"] {
+  color: var(--warning-color, #f6c343);
+}
+.rd-info-button.is-update[aria-expanded="true"] {
+  background: color-mix(in srgb, var(--warning-color, #f6c343) 18%, transparent);
+}
+.rd-master-menu,
+.rd-info-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 5;
+  ${popupSurfaceCss}
+}
+.rd-master-menu {
+  display: flex;
+  justify-content: center;
+  padding: 12px 10px;
+}
+.rd-master-slot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 140px;
+}
+.rd-master-slot input {
+  width: 140px;
+  height: 28px;
+  margin: 0;
+  transform: rotate(-90deg);
+  accent-color: var(--primary-color);
+  cursor: pointer;
+}
+.rd-info-menu {
+  width: min(360px, calc(100vw - 24px));
+  max-height: min(70vh, 480px);
+  overflow: auto;
+  padding: 6px;
+  line-height: 1.3;
+}
+.rd-info-menu .rd-device {
+  margin: 0;
+  padding: 8px;
+  gap: 10px;
+  border-top: 0;
+}
+.rd-info-menu .quiet {
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 0.95rem;
+}
 `;
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -416,7 +557,11 @@ const ICONS = {
   alarms: "M12 22a2 2 0 0 0 2-2h-4a2 2 0 0 0 2 2zm6-6V11a7 7 0 0 0-5-6.71V4a2 2 0 1 0-4 0v.29A7 7 0 0 0 6 11v5l-2 2v1h16v-1l-2-2z",
   intercom: "M6.6 10.8a15 15 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.25 12 12 0 0 0 3.6.55 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1 12 12 0 0 0 .55 3.6 1 1 0 0 1-.25 1L6.6 10.8z",
   agent: "M3 9v6h4l5 5V4L7 9H3zm13.5 3a5 5 0 0 1-2.5 4.03V7.97A5 5 0 0 1 16.5 12zM14 3.23v2.06A7 7 0 0 1 19 12a7 7 0 0 1-5 6.71v2.06A9 9 0 0 0 21 12a9 9 0 0 0-7-8.77z",
-  device: "M7 2h10a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm5 16.5a1.25 1.25 0 1 0 0-2.5 1.25 1.25 0 0 0 0 2.5z",
+  speaker: "M3 9v6h4l5 5V4L7 9H3zm13.5 3a5 5 0 0 1-2.5 4.03V7.97A5 5 0 0 1 16.5 12zM14 3.23v2.06A7 7 0 0 1 19 12a7 7 0 0 1-5 6.71v2.06A9 9 0 0 0 21 12a9 9 0 0 0-7-8.77z",
+  mic: "M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm-1-9c0-.55.45-1 1-1s1 .45 1 1v6c0 .55-.45 1-1 1s-1-.45-1-1V5zm6 6c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z",
+  micOff: "M19 11h-1.7c0 .74-.16 1.43-.43 2.05l1.23 1.23c.56-.98.9-2.09.9-3.28zm-4.02.17c0-.06.02-.11.02-.17V5c0-1.66-1.34-3-3-3S9 3.34 9 5v.18l5.98 5.99zM4.27 3 3 4.27l6.01 6.01V11c0 1.66 1.33 3 2.99 3 .22 0 .44-.03.65-.08l1.66 1.66c-.71.33-1.5.52-2.31.52-2.76 0-5.3-2.1-5.3-5.1H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c.91-.13 1.77-.45 2.55-.9L19.73 21 21 19.73 4.27 3z",
+  info: "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z",
+  alert: "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z",
 };
 
 const TABS = [
@@ -424,7 +569,6 @@ const TABS = [
   { id: "alarms", label: "Alarms & Timers", icon: ICONS.alarms },
   { id: "intercom", label: "Intercom", icon: ICONS.intercom },
   { id: "agent", label: "Voice Agent", icon: ICONS.agent },
-  { id: "device", label: "Device", icon: ICONS.device },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
@@ -504,8 +648,17 @@ class KioskRedisplay extends HTMLElement {
   private mix?: PlaybackMix;
   private dragId?: string;
   private clock = 0;
+  /** Device whose saved tab has already been requested. */
+  private tabLoadKey?: string;
+  /** The user picked a tab after this card was bound, so a late read must not overwrite it. */
+  private tabTouched = false;
   private readonly endDrag = (): void => {
     this.dragId = undefined;
+  };
+  private readonly onPointerDown = (event: Event): void => {
+    const path = typeof event.composedPath === "function" ? event.composedPath() : [];
+    if (!this.insidePart(path, "master")) this.setMenu("master", false);
+    if (!this.insidePart(path, "info")) this.setMenu("info", false);
   };
 
   constructor() {
@@ -555,6 +708,7 @@ class KioskRedisplay extends HTMLElement {
   connectedCallback(): void {
     window.addEventListener("pointerup", this.endDrag);
     window.addEventListener("pointercancel", this.endDrag);
+    window.addEventListener("pointerdown", this.onPointerDown);
     this.renderCard();
     this.clock = window.setInterval(() => this.advanceProgress(), 1000);
   }
@@ -562,6 +716,7 @@ class KioskRedisplay extends HTMLElement {
   disconnectedCallback(): void {
     window.removeEventListener("pointerup", this.endDrag);
     window.removeEventListener("pointercancel", this.endDrag);
+    window.removeEventListener("pointerdown", this.onPointerDown);
     window.clearInterval(this.clock);
     this.dragId = undefined;
   }
@@ -578,6 +733,9 @@ class KioskRedisplay extends HTMLElement {
       this.agentKey = undefined;
       this.deviceKey = undefined;
       this.signature = undefined;
+      this.tab = "now";
+      this.tabTouched = false;
+      this.tabLoadKey = undefined;
     }
     this.model = buildModel({
       deviceId: this.deviceId,
@@ -606,6 +764,10 @@ class KioskRedisplay extends HTMLElement {
     this.paintAgent();
     this.paintDevice();
     this.paintBattery();
+    this.paintPower();
+    this.paintMute();
+    this.paintInfo();
+    this.loadSavedTab();
     this.showTab(this.tab);
   }
 
@@ -620,27 +782,35 @@ class KioskRedisplay extends HTMLElement {
     const root = this.shadowRoot;
     if (!root || root.querySelector("ha-card")) return;
     const style = document.createElement("style");
-    style.textContent = CSS + redisplayAlarmsCss + timersCss + intercomCss + agentCss + deviceCss;
+    style.textContent = CSS + redisplayAlarmsCss + timersCss + intercomCss + agentCss + deviceCss + powerCss;
     const card = document.createElement("ha-card");
     card.dataset.card = "kiosk-redisplay";
     const header = document.createElement("header");
     header.className = "title-row";
+    header.addEventListener("keydown", (event) => {
+      if (!(event instanceof KeyboardEvent) || event.key !== "Escape") return;
+      this.setMenu("master", false);
+      this.setMenu("info", false);
+    });
     const copy = document.createElement("div");
     copy.className = "title-copy";
     const name = document.createElement("h2");
     name.className = "name";
     name.dataset.part = "name";
-    const subtitle = document.createElement("p");
-    subtitle.className = "subtitle";
-    subtitle.dataset.part = "subtitle";
-    copy.append(name, subtitle);
+    copy.append(name);
+    const tools = document.createElement("div");
+    tools.className = "title-tools";
     const battery = document.createElement("div");
     battery.className = "battery";
     battery.dataset.part = "battery";
     battery.setAttribute("role", "img");
     battery.hidden = true;
     battery.append(batteryIcon());
-    header.append(copy, battery);
+    const power = document.createElement("div");
+    power.className = "title-power";
+    power.dataset.part = "power";
+    tools.append(this.masterControl(), this.muteControl(), battery, this.infoControl(), power);
+    header.append(copy, tools);
     const panels = document.createElement("div");
     panels.className = "panels";
     for (const tab of TABS) {
@@ -668,8 +838,123 @@ class KioskRedisplay extends HTMLElement {
     nav.setAttribute("role", "tablist");
     nav.setAttribute("aria-label", "Kiosk Redisplay");
     for (const tab of TABS) nav.append(this.tabButton(tab));
-    card.append(header, panels, nav);
+    card.addEventListener("click", (event) => {
+      const path = event.composedPath();
+      if (path.some((node) => node instanceof Element && node.classList.contains("rd-power-button"))) {
+        this.setMenu("master", false);
+        this.setMenu("info", false);
+      }
+    });
+    card.append(header, nav, panels);
     root.append(style, card);
+  }
+
+  private masterControl(): HTMLElement {
+    const root = document.createElement("div");
+    root.className = "rd-master";
+    root.dataset.part = "master";
+    root.hidden = true;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "rd-master-trigger";
+    button.dataset.part = "master-trigger";
+    button.setAttribute("aria-label", "Volume");
+    button.setAttribute("aria-haspopup", "dialog");
+    button.setAttribute("aria-expanded", "false");
+    button.setAttribute("aria-controls", "rd-master-menu");
+    const glyph = document.createElement("span");
+    glyph.dataset.part = "master-icon";
+    glyph.append(icon(ICONS.speaker));
+    const percent = document.createElement("span");
+    percent.className = "rd-master-percent";
+    percent.dataset.part = "master-readout";
+    button.append(glyph, percent);
+    button.addEventListener("click", () => this.toggleMenu("master"));
+    const menu = document.createElement("div");
+    menu.className = "rd-master-menu";
+    menu.id = "rd-master-menu";
+    menu.dataset.part = "master-menu";
+    menu.hidden = true;
+    const slot = document.createElement("div");
+    slot.className = "rd-master-slot";
+    const slider = document.createElement("input");
+    slider.type = "range";
+    slider.dataset.part = "master-volume";
+    slider.min = "0";
+    slider.max = "100";
+    slider.step = "1";
+    slider.value = "0";
+    slider.setAttribute("aria-label", "Volume");
+    slider.addEventListener("pointerdown", () => {
+      this.dragId = "master-volume";
+    });
+    slider.addEventListener("input", () => {
+      const max = Number(slider.max);
+      this.setText("master-readout", formatVolumeReadout(Number(slider.value), Number.isFinite(max) ? max : 100));
+    });
+    slider.addEventListener("change", () => {
+      this.dragId = undefined;
+      this.commitMaster(Number(slider.value));
+    });
+    slot.append(slider);
+    menu.append(slot);
+    root.append(button, menu);
+    return root;
+  }
+
+  private muteControl(): HTMLButtonElement {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "rd-mute";
+    button.dataset.part = "mute";
+    button.hidden = true;
+    button.setAttribute("aria-pressed", "false");
+    button.setAttribute("aria-label", "Listening");
+    const live = document.createElement("span");
+    live.dataset.part = "mute-live";
+    live.append(icon(ICONS.mic));
+    const off = document.createElement("span");
+    off.dataset.part = "mute-off";
+    off.hidden = true;
+    off.append(icon(ICONS.micOff));
+    button.append(live, off);
+    button.addEventListener("click", () => this.toggleMute());
+    return button;
+  }
+
+  private infoControl(): HTMLElement {
+    const root = document.createElement("div");
+    root.className = "rd-info";
+    root.dataset.part = "info";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "rd-info-button";
+    button.dataset.part = "info-button";
+    button.setAttribute("aria-label", "Device");
+    button.setAttribute("aria-haspopup", "dialog");
+    button.setAttribute("aria-expanded", "false");
+    button.setAttribute("aria-controls", "rd-info-menu");
+    const mark = document.createElement("span");
+    mark.dataset.part = "info-icon";
+    mark.append(icon(ICONS.info));
+    const alert = document.createElement("span");
+    alert.dataset.part = "info-alert";
+    alert.hidden = true;
+    alert.append(icon(ICONS.alert));
+    button.append(mark, alert);
+    button.addEventListener("click", () => this.toggleMenu("info"));
+    const menu = document.createElement("div");
+    menu.className = "rd-info-menu";
+    menu.id = "rd-info-menu";
+    menu.dataset.part = "info-menu";
+    menu.setAttribute("role", "dialog");
+    menu.setAttribute("aria-label", "Device");
+    menu.hidden = true;
+    const body = document.createElement("div");
+    body.dataset.part = "device-body";
+    menu.append(body);
+    root.append(button, menu);
+    return root;
   }
 
   private tabButton(tab: (typeof TABS)[number]): HTMLButtonElement {
@@ -683,15 +968,17 @@ class KioskRedisplay extends HTMLElement {
     const label = document.createElement("span");
     label.textContent = tab.label;
     button.append(icon(tab.icon), label);
-    button.addEventListener("click", () => this.showTab(tab.id));
+    button.addEventListener("click", () => this.showTab(tab.id, true));
     return button;
   }
 
-  private showTab(id: string): void {
+  private showTab(id: string, persist = false): void {
     const selected = chosenTab(id);
     this.tab = selected;
-    const label = TABS.find((tab) => tab.id === selected)?.label ?? "Now playing";
-    this.setText("subtitle", label);
+    if (persist) {
+      this.tabTouched = true;
+      this.persistTab(selected);
+    }
     for (const tab of TABS) {
       const panel = this.piece(`panel-${tab.id}`);
       if (panel) panel.hidden = tab.id !== selected;
@@ -815,13 +1102,8 @@ class KioskRedisplay extends HTMLElement {
     stage.className = "stage";
     stage.append(art, placeholder, title, artist, album, progress, transport);
     if (view.volume) stage.append(this.mediaVolume(view.volume));
-    if (this.mix) stage.append(this.masterVolume(this.mix.volume));
     wrap.append(wash, scrim, status, banner, stage);
     return wrap;
-  }
-
-  private masterVolume(volume: PlaybackMix["volume"]): HTMLElement {
-    return this.rangeRow("Volume", "Volume", "master-volume", "master-readout", volume, (value) => this.commitMaster(value));
   }
 
   private playButton(): HTMLButtonElement {
@@ -968,8 +1250,30 @@ class KioskRedisplay extends HTMLElement {
   }
 
   private paintMix(): void {
+    const host = this.piece("master");
     const volume = this.mix?.volume;
-    if (volume) this.paintRange("master-volume", "master-readout", volume.value, volume.max);
+    if (host) host.hidden = !volume;
+    if (!volume) {
+      this.setMenu("master", false);
+      return;
+    }
+    const slider = this.piece("master-volume");
+    if (slider instanceof HTMLInputElement) {
+      slider.min = String(volume.min);
+      slider.max = String(volume.max);
+      slider.step = String(volume.step);
+    }
+    if (volume.value === null) {
+      if (this.dragId !== "master-volume") {
+        this.setText("master-readout", "—");
+        this.piece("master-trigger")?.setAttribute("aria-label", "Volume");
+      }
+      return;
+    }
+    this.paintRange("master-volume", "master-readout", volume.value, volume.max);
+    if (this.dragId === "master-volume") return;
+    const readout = formatVolumeReadout(volume.value, volume.max);
+    this.piece("master-trigger")?.setAttribute("aria-label", `Volume ${readout}`);
   }
 
   private paintRange(part: string, readout: string, value: number | null, max: number): void {
@@ -1123,7 +1427,7 @@ class KioskRedisplay extends HTMLElement {
     const model = this.model;
     if (!host || !model) return;
     const view = buildAgent(model);
-    if (!view) {
+    if (!view || !agentHasPanel(view)) {
       if (this.agentKey !== "") {
         this.agentKey = "";
         host.replaceChildren(this.quiet("No voice agent settings"));
@@ -1149,7 +1453,7 @@ class KioskRedisplay extends HTMLElement {
   }
 
   private paintDevice(): void {
-    const host = this.piece("panel-device");
+    const host = this.piece("device-body");
     const model = this.model;
     if (!host || !model) return;
     const view = buildDevice(model);
@@ -1169,8 +1473,54 @@ class KioskRedisplay extends HTMLElement {
         if (confirm && !window.confirm(name)) return;
         this.press(entityId);
       },
-      onSwitch: (entityId, on) => {
-        this.call("switch", on ? "turn_on" : "turn_off", undefined, { entity_id: entityId });
+    });
+  }
+
+  private paintMute(): void {
+    const button = this.piece("mute");
+    const mute = this.model ? voiceMute(this.model) : undefined;
+    if (button) button.hidden = !mute;
+    if (!button || !mute) return;
+    const muted = mute.on;
+    button.classList.toggle("is-muted", muted);
+    button.setAttribute("aria-pressed", muted ? "true" : "false");
+    button.setAttribute("aria-label", muted ? "Muted" : "Listening");
+    button.dataset.entity = mute.entityId;
+    const live = this.piece("mute-live");
+    const off = this.piece("mute-off");
+    if (live) live.hidden = muted;
+    if (off) off.hidden = !muted;
+  }
+
+  private toggleMute(): void {
+    const mute = this.model ? voiceMute(this.model) : undefined;
+    if (!mute) return;
+    this.call("switch", mute.on ? "turn_off" : "turn_on", undefined, { entity_id: mute.entityId });
+  }
+
+  private paintInfo(): void {
+    const pending = this.model ? updatesPending(this.model.updates) : false;
+    const button = this.piece("info-button");
+    if (button) {
+      button.classList.toggle("is-update", pending);
+      button.setAttribute("aria-label", pending ? "Device update" : "Device");
+    }
+    const mark = this.piece("info-icon");
+    const alert = this.piece("info-alert");
+    if (mark) mark.hidden = pending;
+    if (alert) alert.hidden = !pending;
+  }
+
+  private paintPower(): void {
+    const host = this.piece("power");
+    const model = this.model;
+    if (!host || !model) return;
+    const view = buildPower(model);
+    host.hidden = !view;
+    renderPower(host, view, {
+      onPress: (entityId, confirm, name) => {
+        if (confirm && !window.confirm(name)) return;
+        this.press(entityId);
       },
     });
   }
@@ -1194,6 +1544,70 @@ class KioskRedisplay extends HTMLElement {
     }
     const bolt = node.querySelector(".battery-bolt");
     if (bolt) (bolt as SVGElement).style.display = mark.charging ? "" : "none";
+  }
+
+  private toggleMenu(which: "master" | "info"): void {
+    const menu = this.piece(which === "master" ? "master-menu" : "info-menu");
+    const open = menu?.hidden !== false;
+    this.setMenu("master", which === "master" && open);
+    this.setMenu("info", which === "info" && open);
+    if (open) this.dismissPower();
+  }
+
+  private setMenu(which: "master" | "info", open: boolean): void {
+    const menu = this.piece(which === "master" ? "master-menu" : "info-menu");
+    const button = this.piece(which === "master" ? "master-trigger" : "info-button");
+    if (menu) menu.hidden = !open;
+    if (button) button.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+
+  private dismissPower(): void {
+    const button = this.shadowRoot?.querySelector(".rd-power-button");
+    if (!(button instanceof Element) || button.getAttribute("aria-expanded") !== "true") return;
+    button.setAttribute("aria-expanded", "false");
+    const menu = this.shadowRoot?.querySelector(".rd-power-menu");
+    if (menu instanceof HTMLElement) menu.hidden = true;
+  }
+
+  private insidePart(path: readonly EventTarget[], part: string): boolean {
+    const host = this.piece(part);
+    return Boolean(host && path.includes(host));
+  }
+
+  private loadSavedTab(): void {
+    const deviceId = this.deviceId;
+    const hass = this._hass;
+    if (!deviceId || !hass) return;
+    const key = userDataGet(deviceId).key;
+    if (this.tabLoadKey === key) return;
+    this.tabLoadKey = key;
+    if (typeof hass.callWS !== "function") return;
+    let pending: Promise<unknown>;
+    try {
+      pending = Promise.resolve(hass.callWS(userDataGet(deviceId)));
+    } catch {
+      return;
+    }
+    void pending.then(
+      (result) => {
+        if (this.tabLoadKey !== key || this.tabTouched) return;
+        const tab = tabFromUserData(result);
+        if (!tab) return;
+        this.showTab(tab);
+      },
+      () => undefined,
+    );
+  }
+
+  private persistTab(tab: StoredTab): void {
+    const hass = this._hass;
+    const deviceId = this.deviceId;
+    if (!hass || !deviceId || typeof hass.callWS !== "function") return;
+    try {
+      void Promise.resolve(hass.callWS(userDataSet(deviceId, tab))).catch(() => undefined);
+    } catch {
+      // A failed write leaves the tab on screen.
+    }
   }
 
   private quiet(text: string): HTMLElement {
@@ -1229,7 +1643,7 @@ if (!cardWindow.customCards.some((card) => card.type === "kiosk-redisplay")) {
   cardWindow.customCards.push({
     type: "kiosk-redisplay",
     name: "Kiosk Redisplay",
-    description: "Now playing, alarms and timers, intercom, voice agent, and device for an audio-only Kiosk Satellite.",
+    description: "Now playing, alarms and timers, intercom, and voice agent for an audio-only Kiosk Satellite.",
     preview: true,
   });
 }

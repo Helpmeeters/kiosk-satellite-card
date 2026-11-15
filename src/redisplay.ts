@@ -45,12 +45,12 @@ export interface RedisplayView {
   timer?: string;
 }
 
-/** Master volume. Media volume stays on the player. Mute, chimes, and noise gate stay off this slider. */
+/** Master volume, the header speaker. Media volume stays on Now playing. */
 export interface PlaybackMix {
   volume: RedisplayVolume;
 }
 
-export type RedisplayTab = "now" | "alarms" | "intercom" | "agent" | "device";
+export type RedisplayTab = "now" | "alarms" | "intercom" | "agent";
 
 const ASSIST_LABELS: Record<string, string> = {
   listening: "Listening",
@@ -132,15 +132,15 @@ export function buildRedisplay(model: SatelliteModel, player: PlayerSnapshot | u
   return view;
 }
 
-/** A remembered Timers or Alarms selection opens Alarms & Timers. Anything else unknown opens Now playing. */
+/** A remembered Timers or Alarms selection opens Alarms & Timers. Device and anything else unknown open Now playing. */
 export function redisplayTab(id: string): RedisplayTab {
   if (id === "alarms" || id === "timers") return "alarms";
-  if (id === "intercom" || id === "agent" || id === "device" || id === "now") return id;
+  if (id === "intercom" || id === "agent" || id === "now") return id;
   return "now";
 }
 
 /**
- * Volume, the master slider. Media volume, assistant volume, and intercom volume stay out.
+ * Volume, the header speaker. Media volume, assistant volume, and intercom volume stay out.
  * Mute, chimes, and noise gate are not part of this slider.
  */
 export function playbackMix(model: SatelliteModel): PlaybackMix | undefined {

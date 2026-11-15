@@ -27,10 +27,14 @@ export interface AgentView {
   selects: AgentSelectView[];
   /** Assistant volume, the same slider shape as Media volume. */
   volume?: AgentVolumeView;
-  /** Mute. Chimes, noise gate, and mute timers stay off this tab. */
+  /** Mute. The header mic toggles this. The Voice Agent panel does not render it. */
   mute?: AgentSwitchView;
   /** Stop word. */
   stopWord?: AgentSwitchView;
+  /** Play chimes: wake, done, error, and announcement sounds. */
+  chimes?: AgentSwitchView;
+  /** Wake word noise gate. Skips inference while the room is quiet. */
+  noiseGate?: AgentSwitchView;
 }
 
 /**
@@ -51,14 +55,18 @@ export interface AgentHandlers {
 }
 
 interface AgentRow {
-  /** Finished speaking detection fills the row. Pairs stay two columns. */
+  /** One column. A select beside Stop word, and a pair of switches, use two. */
   single: boolean;
   selects: AgentSelectView[];
+  switches: AgentSwitchView[];
+  /** Chimes and Noise gate follow Assistant volume. Stop word stays with the selects. */
+  afterVolume: boolean;
 }
 
 const ROWS: ReadonlyArray<{ names: readonly string[]; single: boolean }> = [
   { names: ["wake word", "wake word 2"], single: false },
   { names: ["assistant", "assistant 2"], single: false },
+  // Stop word joins this row when that switch exists. Alone, the select stays one column.
   { names: ["finished speaking detection"], single: true },
   { names: ["wake word engine", "wake word sensitivity"], single: false },
 ];
@@ -68,8 +76,9 @@ const layouts = new WeakMap<HTMLElement, string>();
 
 /**
  * Wake word, wake word 2, assistant, assistant 2, finished speaking detection,
- * wake word engine, and sensitivity, plus Assistant volume, Mute, and Stop word.
- * Chimes, noise gate, mute timers, and other settings stay out.
+ * wake word engine, and sensitivity, plus Assistant volume, Mute, Stop word,
+ * Chimes, and Noise gate. Mute stays on the view for the header mic.
+ * Mute timers and other settings stay out.
  */
 export function buildAgent(model: SatelliteModel): AgentView | undefined {
   const selects = model.voiceSelects.map((select) => ({
@@ -81,11 +90,15 @@ export function buildAgent(model: SatelliteModel): AgentView | undefined {
   const volume = namedVolume(model, "assistant volume");
   const mute = namedSwitch(model, "mute");
   const stopWord = namedSwitch(model, "stop word");
-  if (selects.length === 0 && !volume && !mute && !stopWord) return undefined;
+  const chimes = namedSwitch(model, "chimes");
+  const noiseGate = namedSwitch(model, "noise gate");
+  if (selects.length === 0 && !volume && !mute && !stopWord && !chimes && !noiseGate) return undefined;
   const view: AgentView = { selects };
   if (volume) view.volume = volumeView(volume);
-  if (mute) view.mute = { entityId: mute.entityId, name: mute.name, on: mute.on };
-  if (stopWord) view.stopWord = { entityId: stopWord.entityId, name: stopWord.name, on: stopWord.on };
+  if (mute) view.mute = switchView(mute);
+  if (stopWord) view.stopWord = switchView(stopWord);
+  if (chimes) view.chimes = switchView(chimes);
+  if (noiseGate) view.noiseGate = switchView(noiseGate);
   return view;
 }
 
@@ -106,6 +119,9 @@ export const agentCss = `
 }
 .rd-agent-row-single {
   grid-template-columns: 1fr;
+}
+.rd-agent-row-aside {
+  grid-template-columns: minmax(0, 1fr) auto;
 }
 .rd-agent-field {
   display: flex;
@@ -220,13 +236,13 @@ export function renderAgent(
   extra?: Omit<AgentHandlers, "onSelect">,
 ): void {
   handlers.set(parent, { onSelect, ...extra });
-  if (!view || (view.selects.length === 0 && !view.volume && !view.mute && !view.stopWord)) {
+  if (!view || !hasAgentBody(view)) {
     const existing = findSection(parent);
     if (existing) layouts.delete(existing);
     parent.replaceChildren();
     return;
   }
-  const rows = groupSelects(view.selects);
+  const rows = agentRows(view);
   const key = layoutKey(rows, view);
   let section = findSection(parent);
   if (!section || layouts.get(section) !== key) {
@@ -248,23 +264,34 @@ function listedOptions(options: readonly string[], value: string): string[] {
   return listed;
 }
 
-function groupSelects(selects: readonly AgentSelectView[]): AgentRow[] {
+function agentRows(view: AgentView): AgentRow[] {
   const used = new Set<AgentSelectView>();
   const rows: AgentRow[] = [];
-  for (const row of ROWS) {
+  for (const spec of ROWS) {
     const picked: AgentSelectView[] = [];
-    for (const name of row.names) {
-      const found = selects.find((item) => !used.has(item) && normalize(item.name) === name);
+    for (const name of spec.names) {
+      const found = view.selects.find((item) => !used.has(item) && normalize(item.name) === name);
       if (!found) continue;
       used.add(found);
       picked.push(found);
     }
-    if (picked.length > 0) rows.push({ single: row.single, selects: picked });
+    const stopWord = spec.names.includes("finished speaking detection") ? view.stopWord : undefined;
+    const switches = stopWord ? [stopWord] : [];
+    if (picked.length === 0 && switches.length === 0) continue;
+    const paired = picked.length > 0 && switches.length > 0;
+    rows.push({
+      single: paired ? false : picked.length === 0 ? true : spec.single,
+      selects: picked,
+      switches,
+      afterVolume: false,
+    });
   }
-  for (const item of selects) {
+  for (const item of view.selects) {
     if (used.has(item)) continue;
-    rows.push({ single: true, selects: [item] });
+    rows.push({ single: true, selects: [item], switches: [], afterVolume: false });
   }
+  const tail = [view.chimes, view.noiseGate].filter((item): item is AgentSwitchView => Boolean(item));
+  if (tail.length > 0) rows.push({ single: tail.length === 1, selects: [], switches: tail, afterVolume: true });
   return rows;
 }
 
@@ -273,13 +300,28 @@ function normalize(name: string): string {
 }
 
 function layoutKey(rows: readonly AgentRow[], view: AgentView): string {
-  const rowsKey = rows.map((row) => `${row.single ? "s" : "p"}:${row.selects.map((item) => item.entityId).join(",")}`).join("|");
-  const switches = agentSwitches(view).map((item) => item.entityId).join(",");
-  return `${rowsKey}|v:${view.volume?.entityId ?? ""}|s:${switches}`;
+  const rowsKey = rows
+    .map((row) => {
+      const selects = row.selects.map((item) => item.entityId).join(",");
+      const switches = row.switches.map((item) => item.entityId).join(",");
+      const kind = row.selects.length > 0 && row.switches.length > 0 ? "a" : row.single ? "s" : "p";
+      return `${kind}:${selects}+${switches}`;
+    })
+    .join("|");
+  return `${rowsKey}|v:${view.volume?.entityId ?? ""}`;
 }
 
-function agentSwitches(view: AgentView): AgentSwitchView[] {
-  return [view.mute, view.stopWord].filter((item): item is AgentSwitchView => Boolean(item));
+/** Selects, Assistant volume, Stop word, Chimes, or Noise gate. Mute is for the header mic. */
+export function agentHasPanel(view: AgentView): boolean {
+  return view.selects.length > 0 || Boolean(view.volume || view.stopWord || view.chimes || view.noiseGate);
+}
+
+function hasAgentBody(view: AgentView): boolean {
+  return agentHasPanel(view);
+}
+
+function switchView(item: SwitchControl): AgentSwitchView {
+  return { entityId: item.entityId, name: item.name, on: item.on };
 }
 
 function namedVolume(model: SatelliteModel, name: string): VolumeControl | undefined {
@@ -317,22 +359,42 @@ function createSection(): HTMLElement {
 
 function rebuildRows(section: HTMLElement, parent: HTMLElement, rows: readonly AgentRow[], view: AgentView): void {
   const existing = fieldMap(section);
-  const nodes: HTMLElement[] = [];
+  const before: HTMLElement[] = [];
+  const after: HTMLElement[] = [];
   for (const row of rows) {
-    const node = document.createElement("div");
-    node.className = row.single ? "rd-agent-row rd-agent-row-single" : "rd-agent-row";
-    for (const item of row.selects) {
-      const field = existing.get(item.entityId);
-      node.append(field ? updateField(field, item) : createField(parent, item));
-    }
-    nodes.push(node);
+    const node = fillRow(section, parent, existing, row);
+    (row.afterVolume ? after : before).push(node);
   }
-  const extras: HTMLElement[] = [];
-  if (view.volume) extras.push(existingVolume(section) ?? createVolume(parent, view.volume));
-  for (const item of agentSwitches(view)) extras.push(switchRow(section, item.entityId) ?? createSwitch(parent, item));
-  section.replaceChildren(...nodes, ...extras);
+  const nodes = [...before];
+  if (view.volume) nodes.push(existingVolume(section) ?? createVolume(parent, view.volume));
+  nodes.push(...after);
+  section.replaceChildren(...nodes);
   if (view.volume) paintVolume(section, view.volume);
-  for (const item of agentSwitches(view)) paintSwitchView(section, item);
+  for (const row of rows) {
+    for (const item of row.switches) paintSwitchView(section, item);
+  }
+}
+
+function fillRow(
+  section: HTMLElement,
+  parent: HTMLElement,
+  existing: Map<string, HTMLElement>,
+  row: AgentRow,
+): HTMLElement {
+  const node = document.createElement("div");
+  node.className = rowClass(row);
+  for (const item of row.selects) {
+    const field = existing.get(item.entityId);
+    node.append(field ? updateField(field, item) : createField(parent, item));
+  }
+  for (const item of row.switches) node.append(switchRow(section, item.entityId) ?? createSwitch(parent, item));
+  return node;
+}
+
+function rowClass(row: AgentRow): string {
+  if (row.selects.length > 0 && row.switches.length > 0) return "rd-agent-row rd-agent-row-aside";
+  if (row.single) return "rd-agent-row rd-agent-row-single";
+  return "rd-agent-row";
 }
 
 function patchRows(section: HTMLElement, rows: readonly AgentRow[], view: AgentView): void {
@@ -342,9 +404,9 @@ function patchRows(section: HTMLElement, rows: readonly AgentRow[], view: AgentV
       const field = existing.get(item.entityId);
       if (field) updateField(field, item);
     }
+    for (const item of row.switches) paintSwitchView(section, item);
   }
   if (view.volume) paintVolume(section, view.volume);
-  for (const item of agentSwitches(view)) paintSwitchView(section, item);
 }
 
 function fieldMap(section: HTMLElement): Map<string, HTMLElement> {

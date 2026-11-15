@@ -211,13 +211,13 @@ describe("buildRedisplay", () => {
 });
 
 describe("redisplayTab", () => {
-  it("keeps the five tabs and folds a remembered Timers or Alarms selection into Alarms & Timers", () => {
+  it("keeps the four tabs and folds a remembered device selection into Now playing", () => {
     assert.equal(redisplayTab("now"), "now");
     assert.equal(redisplayTab("alarms"), "alarms");
     assert.equal(redisplayTab("timers"), "alarms");
     assert.equal(redisplayTab("intercom"), "intercom");
     assert.equal(redisplayTab("agent"), "agent");
-    assert.equal(redisplayTab("device"), "device");
+    assert.equal(redisplayTab("device"), "now");
     assert.equal(redisplayTab("light"), "now");
   });
 });

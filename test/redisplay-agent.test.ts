@@ -84,6 +84,10 @@ class DomNode {
     for (const listener of this.listeners.get("change") ?? []) listener();
   }
 
+  click(): void {
+    for (const listener of this.listeners.get("click") ?? []) listener();
+  }
+
   querySelector(selector: string): DomNode | null {
     return this.querySelectorAll(selector)[0] ?? null;
   }
@@ -108,6 +112,17 @@ function textOf(node: DomNode): string {
   return [node.textContent ?? "", ...node.children.map(textOf)].join(" ");
 }
 
+function controlLabels(row: DomNode): string[] {
+  return row.children.map((child) => {
+    const named = child.querySelector(".rd-agent-name") ?? child.querySelector(".rd-agent-switch-label");
+    return named?.textContent ?? "";
+  });
+}
+
+function switchByLabel(root: DomNode, name: string): DomNode | undefined {
+  return root.querySelectorAll(".rd-agent-switch").find((node) => node.getAttribute("aria-label") === name);
+}
+
 function optionNodes(selectNode: DomNode): DomNode[] {
   return selectNode.children.filter((child) => child.tagName.toLowerCase() === "option");
 }
@@ -116,10 +131,7 @@ describe("buildAgent", () => {
   it("omits the section when the device has no voice agent controls", () => {
     const view = buildAgent(
       satellite({
-        voiceSwitches: [
-          { entityId: "switch.chimes", name: "Chimes", on: true },
-          { entityId: "switch.gate", name: "Noise gate", on: false },
-        ],
+        voiceSwitches: [{ entityId: "switch.timers", name: "Mute timers", on: false }],
         timers: [{ entityId: "sensor.timers", name: "Timers", state: "1" }],
         settings: [
           select("select.theme", "Theme", ["Dark", "Light"], "Dark"),
@@ -246,7 +258,7 @@ describe("buildAgent", () => {
     assert.equal(JSON.stringify(view).includes("Timers"), false);
   });
 
-  it("adds assistant volume, mute, and stop word, and leaves the other voice switches out", () => {
+  it("adds assistant volume, mute, stop word, chimes, and noise gate", () => {
     const view = buildAgent(
       satellite({
         voiceSelects: [select("select.wake", "Wake word", ["Hey Jarvis"], "Hey Jarvis")],
@@ -267,10 +279,25 @@ describe("buildAgent", () => {
     assert.equal(view?.volume?.value, 80);
     assert.deepEqual(view?.mute, { entityId: "switch.mute", name: "Mute", on: true });
     assert.deepEqual(view?.stopWord, { entityId: "switch.stop", name: "Stop word", on: true });
-    assert.equal(JSON.stringify(view).includes("Chimes"), false);
-    assert.equal(JSON.stringify(view).includes("Noise gate"), false);
+    assert.deepEqual(view?.chimes, { entityId: "switch.chimes", name: "Chimes", on: true });
+    assert.deepEqual(view?.noiseGate, { entityId: "switch.gate", name: "Noise gate", on: false });
     assert.equal(JSON.stringify(view).includes("Mute timers"), false);
     assert.equal(JSON.stringify(view).includes("Media volume"), false);
+  });
+
+  it("shows Chimes and Noise gate on their own", () => {
+    const view = buildAgent(
+      satellite({
+        voiceSwitches: [
+          { entityId: "switch.chimes", name: "VS Chimes", on: false },
+          { entityId: "switch.gate", name: "VS Noise gate", on: true },
+        ],
+      }),
+    );
+    assert.deepEqual(view?.chimes, { entityId: "switch.chimes", name: "VS Chimes", on: false });
+    assert.deepEqual(view?.noiseGate, { entityId: "switch.gate", name: "VS Noise gate", on: true });
+    assert.equal(view?.mute, undefined);
+    assert.equal(view?.stopWord, undefined);
   });
 });
 
@@ -288,6 +315,7 @@ describe("agentCss", () => {
     assert.match(agentCss, /\.rd-agent\s*\{[^}]*padding:\s*16px 16px 18px/);
     assert.match(agentCss, /\.rd-agent-row\s*\{[^}]*grid-template-columns:\s*1fr 1fr/);
     assert.match(agentCss, /\.rd-agent-row-single\s*\{[^}]*grid-template-columns:\s*1fr/);
+    assert.match(agentCss, /\.rd-agent-row-aside\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) auto/);
     assert.match(agentCss, /\.rd-agent-select\s*\{[^}]*font-size:\s*1\.15rem/);
     for (const token of ["--primary-text-color", "--secondary-text-color", "--primary-color", "--divider-color"]) {
       assert.equal(agentCss.includes(`var(${token})`), true);
@@ -296,6 +324,7 @@ describe("agentCss", () => {
       "rd-agent",
       "rd-agent-row",
       "rd-agent-row-single",
+      "rd-agent-row-aside",
       "rd-agent-field",
       "rd-agent-name",
       "rd-agent-control",
@@ -359,7 +388,9 @@ describe("renderAgent", () => {
   });
 
   it("shows Voice Agent as paired rows of selects", () => {
-    const parent = mount(sample());
+    const view = sample();
+    assert.deepEqual(view.mute, { entityId: "switch.mute", name: "Mute", on: true });
+    const parent = mount(view);
     const section = parent.querySelector(".rd-agent");
     assert.equal(section?.tagName, "section");
     assert.equal(section?.getAttribute("aria-label"), "Voice Agent");
@@ -402,7 +433,8 @@ describe("renderAgent", () => {
 
     const text = textOf(parent);
     assert.equal(text.includes("Theme"), false);
-    assert.equal(parent.querySelector(".rd-agent-switch-label")?.textContent, "Mute");
+    assert.equal(parent.querySelector(".rd-agent-switch"), null);
+    assert.equal(text.includes("Mute"), false);
     assert.equal(text.includes("Dark"), false);
   });
 
@@ -504,5 +536,165 @@ describe("renderAgent", () => {
       ["Hey Jarvis", "Hey Mycroft", "Alexa"],
     );
     assert.deepEqual(calls, []);
+  });
+
+  it("pairs Stop word with Finished speaking detection and Chimes with Noise gate", () => {
+    const view = buildAgent(
+      satellite({
+        voiceSelects: [
+          select("select.wake", "Wake word", ["Hey Jarvis"], "Hey Jarvis"),
+          select("select.wake2", "Wake word 2", ["Hey Mycroft"], "Hey Mycroft"),
+          select("select.assistant", "Assistant", ["Home"], "Home"),
+          select("select.assistant2", "Assistant 2", ["Cloud"], "Cloud"),
+          select("select.finished", "Finished speaking detection", ["Silence", "VAD"], "Silence"),
+          select("select.engine", "Wake word engine", ["openWakeWord"], "openWakeWord"),
+          select("select.sensitivity", "Wake word sensitivity", ["0.5"], "0.5"),
+        ],
+        volumes: [{ entityId: "number.assistant", name: "Assistant volume", min: 0, max: 100, step: 5, value: 40 }],
+        voiceSwitches: [
+          { entityId: "switch.mute", name: "Mute", on: true },
+          { entityId: "switch.stop", name: "Stop word", on: true },
+          { entityId: "switch.chimes", name: "Chimes", on: true },
+          { entityId: "switch.gate", name: "Noise gate", on: false },
+        ],
+      }),
+    );
+    assert.deepEqual(view?.mute, { entityId: "switch.mute", name: "Mute", on: true });
+    const parent = mount(view);
+    const section = parent.querySelector(".rd-agent");
+    assert.ok(section);
+    assert.deepEqual(
+      section.children.map((node) => node.className),
+      [
+        "rd-agent-row",
+        "rd-agent-row",
+        "rd-agent-row rd-agent-row-aside",
+        "rd-agent-row",
+        "rd-agent-volume",
+        "rd-agent-row",
+      ],
+    );
+    const rows = parent.querySelectorAll(".rd-agent-row");
+    assert.deepEqual(rows.map(controlLabels), [
+      ["Wake word", "Wake word 2"],
+      ["Assistant", "Assistant 2"],
+      ["Finished speaking detection", "Stop word"],
+      ["Wake word engine", "Wake word sensitivity"],
+      ["Chimes", "Noise gate"],
+    ]);
+    const finished = rows[2];
+    assert.ok(finished);
+    assert.equal(finished.children[0]?.className.includes("rd-agent-field"), true);
+    assert.equal(finished.children[1]?.className.includes("rd-agent-switch-row"), true);
+    assert.equal(finished.querySelector(".rd-agent-select")?.getAttribute("aria-label"), "Finished speaking detection");
+    assert.equal(finished.querySelector(".rd-agent-switch")?.getAttribute("role"), "switch");
+    assert.equal(finished.querySelector(".rd-agent-switch")?.getAttribute("aria-checked"), "true");
+    const chimes = rows[4];
+    assert.equal(chimes?.className.includes("rd-agent-row-single"), false);
+    assert.equal(chimes?.className.includes("rd-agent-row-aside"), false);
+    assert.equal(chimes?.querySelectorAll(".rd-agent-switch").length, 2);
+    assert.equal(textOf(parent).includes("Mute"), false);
+    assert.equal(switchByLabel(parent, "Mute"), undefined);
+
+    const muteOnly = new DomNode("div");
+    renderAgent(muteOnly as unknown as HTMLElement, { selects: [], mute: view?.mute }, () => undefined);
+    assert.equal(muteOnly.children.length, 0);
+  });
+
+  it("leaves Stop word, Chimes, or Noise gate alone when its partner is absent", () => {
+    const finishedOnly = mount(
+      buildAgent(
+        satellite({
+          voiceSelects: [select("select.finished", "Finished speaking detection", ["Silence"], "Silence")],
+        }),
+      ),
+    );
+    const finishedRows = finishedOnly.querySelectorAll(".rd-agent-row");
+    assert.deepEqual(finishedRows.map(controlLabels), [["Finished speaking detection"]]);
+    assert.equal(finishedRows[0]?.className.includes("rd-agent-row-single"), true);
+    assert.equal(finishedRows[0]?.className.includes("rd-agent-row-aside"), false);
+
+    const stopOnly = mount(
+      buildAgent(
+        satellite({
+          voiceSelects: [
+            select("select.wake", "Wake word", ["Hey Jarvis"], "Hey Jarvis"),
+            select("select.engine", "Wake word engine", ["openWakeWord"], "openWakeWord"),
+          ],
+          voiceSwitches: [{ entityId: "switch.stop", name: "Stop word", on: false }],
+        }),
+      ),
+    );
+    const stopRows = stopOnly.querySelectorAll(".rd-agent-row");
+    assert.deepEqual(stopRows.map(controlLabels), [["Wake word"], ["Stop word"], ["Wake word engine"]]);
+    assert.equal(stopRows[1]?.className.includes("rd-agent-row-single"), true);
+    assert.equal(stopRows[0]?.className.includes("rd-agent-row-single"), false);
+
+    const chimesOnly = mount(
+      buildAgent(satellite({ voiceSwitches: [{ entityId: "switch.chimes", name: "Chimes", on: true }] })),
+    );
+    const chimeRows = chimesOnly.querySelectorAll(".rd-agent-row");
+    assert.deepEqual(chimeRows.map(controlLabels), [["Chimes"]]);
+    assert.equal(chimeRows[0]?.className.includes("rd-agent-row-single"), true);
+
+    const gateOnly = mount(
+      buildAgent(satellite({ voiceSwitches: [{ entityId: "switch.gate", name: "Noise gate", on: false }] })),
+    );
+    const gateRows = gateOnly.querySelectorAll(".rd-agent-row");
+    assert.deepEqual(gateRows.map(controlLabels), [["Noise gate"]]);
+    assert.equal(gateRows[0]?.className.includes("rd-agent-row-single"), true);
+  });
+
+  it("toggles Chimes and Noise gate on a shared row and leaves Mute out", () => {
+    const calls: string[] = [];
+    const parent = new DomNode("div");
+    const switches = [
+      { entityId: "switch.mute", name: "Mute", on: false },
+      { entityId: "switch.stop", name: "Stop word", on: true },
+      { entityId: "switch.chimes", name: "Chimes", on: true },
+      { entityId: "switch.gate", name: "Noise gate", on: false },
+      { entityId: "switch.timers", name: "Mute timers", on: true },
+    ];
+    const view = buildAgent(satellite({ voiceSwitches: switches }));
+    assert.deepEqual(view?.mute, { entityId: "switch.mute", name: "Mute", on: false });
+    const onSwitch = (entityId: string, on: boolean): void => {
+      calls.push(`${entityId}:${on}`);
+    };
+    renderAgent(parent as unknown as HTMLElement, view, () => undefined, { onSwitch });
+    const rows = parent.querySelectorAll(".rd-agent-row");
+    assert.deepEqual(rows.map(controlLabels), [["Stop word"], ["Chimes", "Noise gate"]]);
+    assert.equal(rows[0]?.className.includes("rd-agent-row-single"), true);
+    assert.equal(rows[1]?.className.includes("rd-agent-row-single"), false);
+    assert.equal(textOf(parent).includes("Mute"), false);
+    assert.equal(textOf(parent).includes("Mute timers"), false);
+    const chimes = switchByLabel(parent, "Chimes");
+    const gate = switchByLabel(parent, "Noise gate");
+    assert.ok(chimes && gate);
+    assert.equal(chimes.getAttribute("aria-checked"), "true");
+    assert.equal(gate.getAttribute("aria-checked"), "false");
+    chimes.click();
+    gate.click();
+    assert.deepEqual(calls, ["switch.chimes:false", "switch.gate:true"]);
+
+    renderAgent(
+      parent as unknown as HTMLElement,
+      buildAgent(
+        satellite({
+          voiceSwitches: [
+            { entityId: "switch.mute", name: "Mute", on: true },
+            { entityId: "switch.stop", name: "Stop word", on: false },
+            { entityId: "switch.chimes", name: "Chimes", on: false },
+            { entityId: "switch.gate", name: "Noise gate", on: true },
+          ],
+        }),
+      ),
+      () => undefined,
+      { onSwitch },
+    );
+    assert.equal(parent.querySelectorAll(".rd-agent-switch").length, 3);
+    assert.equal(switchByLabel(parent, "Mute"), undefined);
+    assert.equal(switchByLabel(parent, "Chimes")?.getAttribute("aria-checked"), "false");
+    assert.equal(switchByLabel(parent, "Noise gate")?.getAttribute("aria-checked"), "true");
+    assert.equal(textOf(parent).includes("Mute"), false);
   });
 });
