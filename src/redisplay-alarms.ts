@@ -175,6 +175,10 @@ export const redisplayAlarmsCss = `
 .rd-alarms-item-next .rd-alarms-item-time {
   font-size: 1.6rem;
 }
+.rd-alarms-item-off .rd-alarms-item-time,
+.rd-alarms-item-off .rd-alarms-item-label {
+  color: var(--secondary-text-color);
+}
 .rd-alarms-add {
   display: flex;
   align-items: center;
@@ -286,7 +290,9 @@ export function buildRedisplayAlarms(
     ringing: alarms.ringing,
     ringingControls: Boolean(alarms.ringingId || alarms.snoozeId || alarms.stopId),
     script,
-    items: script ? orderAlarms(list?.alarms ?? [], alarms.nextAlarmId ? alarms.nextAlarm : undefined) : [],
+    items: script
+      ? withSensorAlarm(orderAlarms(list?.alarms ?? [], alarms.nextAlarmId ? alarms.nextAlarm : undefined), alarms.nextAlarmId ? alarms.nextAlarm : undefined)
+      : [],
   };
   if (alarms.nextAlarmId) view.nextAlarm = nextAlarmText(alarms.nextAlarm);
   const snoozed = alarms.snoozedUntilId ? formatAlarmStamp(alarms.snoozedUntil) : undefined;
@@ -585,7 +591,10 @@ function paintError(root: HTMLElement, error: string | undefined): void {
 }
 
 function itemRow(parent: HTMLElement, item: RedisplayAlarmItem, headline?: string): HTMLElement {
-  const row = el("div", item.next ? "rd-alarms-item rd-alarms-item-next" : "rd-alarms-item");
+  const classes = ["rd-alarms-item"];
+  if (item.next) classes.push("rd-alarms-item-next");
+  if (!item.enabled) classes.push("rd-alarms-item-off");
+  const row = el("div", classes.join(" "));
   if (item.next) {
     const kicker = el("p", "rd-alarms-kicker");
     kicker.textContent = "Next";
@@ -665,6 +674,18 @@ function presentAlarm(alarm: RedisplayAlarmEntry): RedisplayAlarmItem {
 
 const WEEKDAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 
+/** The script list is the source of saved alarms. A next-alarm timestamp still belongs in that list when the script omitted it. */
+function withSensorAlarm(items: RedisplayAlarmItem[], nextRaw: string | undefined): RedisplayAlarmItem[] {
+  const target = nextClock(nextRaw);
+  if (!target) return items;
+  if (items.some((item) => clockMinutes(item.time) === target.minutes)) return items;
+  const hours = Math.floor(target.minutes / 60);
+  const minutes = target.minutes % 60;
+  const time = `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+  const row = presentAlarm({ time, label: "", days: [], enabled: true });
+  return [{ ...row, next: true }, ...items.map((item) => ({ ...item, next: false, days: item.days.slice() }))];
+}
+
 function orderAlarms(alarms: readonly RedisplayAlarmEntry[], nextRaw: string | undefined): RedisplayAlarmItem[] {
   const items = alarms.map((alarm) => presentAlarm(alarm));
   const index = nextIndex(items, nextRaw);
@@ -679,7 +700,7 @@ function nextIndex(items: readonly RedisplayAlarmItem[], raw: string | undefined
   if (!target) return -1;
   const matches = items
     .map((item, index) => ({ item, index, minutes: clockMinutes(item.time) }))
-    .filter((candidate) => candidate.minutes === target.minutes);
+    .filter((candidate) => candidate.item.enabled && candidate.minutes === target.minutes);
   if (matches.length === 0) return -1;
   const weekday = target.weekday;
   const byDay = matches.find((candidate) => weekday !== undefined && candidate.item.days.map((day) => day.toLowerCase()).includes(weekday));
@@ -744,7 +765,10 @@ function parseAlarm(value: unknown): RedisplayAlarmEntry | undefined {
 
 function daysOf(value: unknown): string[] {
   if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string" && item.length > 0);
-  if (typeof value === "string" && value.trim()) return value.split(/[,\s]+/).filter(Boolean);
+  if (typeof value === "string" && value.trim()) {
+    if (value.trim().toLowerCase() === "once") return [];
+    return value.split(/[,\s]+/).filter(Boolean);
+  }
   return [];
 }
 

@@ -280,7 +280,16 @@ button.text {
   grid-template-columns: auto 1fr auto;
   gap: 10px;
   align-items: center;
-  margin-top: 4px;
+}
+.volume .speaker {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  color: var(--secondary-text-color);
+}
+.volume .speaker svg {
+  width: 22px;
+  height: 22px;
 }
 .volume input {
   width: 100%;
@@ -1101,8 +1110,9 @@ class KioskRedisplay extends HTMLElement {
     const stage = document.createElement("div");
     stage.className = "stage";
     stage.append(art, placeholder, title, artist, album, progress, transport);
-    if (view.volume) stage.append(this.mediaVolume(view.volume));
-    wrap.append(wash, scrim, status, banner, stage);
+    wrap.append(wash, scrim);
+    if (view.volume) wrap.append(this.mediaVolume(view.volume));
+    wrap.append(status, banner, stage);
     return wrap;
   }
 
@@ -1146,11 +1156,10 @@ class KioskRedisplay extends HTMLElement {
   }
 
   private mediaVolume(volume: NonNullable<RedisplayView["volume"]>): HTMLElement {
-    return this.rangeRow("Media", "Media volume", "volume", "volume-readout", volume, (value) => this.commitVolume(value));
+    return this.rangeRow("Media volume", "volume", "volume-readout", volume, (value) => this.commitVolume(value));
   }
 
   private rangeRow(
-    labelText: string,
     aria: string,
     part: string,
     readoutPart: string,
@@ -1160,7 +1169,9 @@ class KioskRedisplay extends HTMLElement {
     const row = document.createElement("div");
     row.className = "volume";
     const label = document.createElement("span");
-    label.textContent = labelText;
+    label.className = "speaker";
+    label.setAttribute("aria-hidden", "true");
+    label.append(icon(ICONS.speaker));
     const slider = document.createElement("input");
     slider.type = "range";
     slider.dataset.part = part;

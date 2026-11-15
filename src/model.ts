@@ -316,7 +316,10 @@ function stringArray(value: unknown): string[] {
 }
 
 function named(entry: RegistryEntry, name: string): boolean {
-  return normalize(displayName(entry)) === name;
+  const shown = normalize(displayName(entry));
+  // Lovelace may only have the friendly name or the object id, both prefixed
+  // with the device ("Updoot2 Next alarm", "updoot2 next alarm").
+  return shown === name || shown.endsWith(` ${name}`);
 }
 
 function rankOf(name: string, ranks: readonly string[]): number {

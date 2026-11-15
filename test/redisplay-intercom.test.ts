@@ -129,32 +129,34 @@ function host(): El {
   return new El("div");
 }
 
-function absentAnswer() {
-  return {
-    name: "Intercom answer mode",
-    options: [] as string[],
-    value: "",
-    disabled: true,
-  };
+const ANSWER_OPTIONS = ["Ring", "Answer automatically", "Do not disturb"];
+
+function answerSelect(entityId: string, value: string, name = "Intercom answer mode") {
+  return { entityId, name, options: ANSWER_OPTIONS.slice(), value };
 }
 
-function absentDisturb() {
-  return {
-    name: "Intercom do not disturb",
-    on: false,
-    disabled: true,
-  };
+function render(
+  parent: El,
+  view: IntercomView | undefined,
+  onSwitch: IntercomSwitchChange = () => undefined,
+  onVolume?: (entityId: string, value: number) => void,
+  onSelect?: IntercomSelectChange,
+): void {
+  renderIntercom(parent as unknown as HTMLElement, view, onSwitch, onVolume, onSelect);
 }
 
-function render(parent: El, view: IntercomView | undefined, onSwitch: IntercomSwitchChange = () => undefined): void {
-  renderIntercom(parent as unknown as HTMLElement, view, onSwitch);
+function buttons(view: IntercomView | undefined): Array<[string, string, boolean, boolean, string]> {
+  return (view?.buttons ?? []).map((button) => [button.id, button.label, button.selected, button.disabled, button.option ?? ""]);
 }
 
 describe("buildIntercom", () => {
-  it("omits the section when the device has no intercom switches, volume, or answer mode", () => {
+  it("omits the section when the device has no intercom switch, volume, or answer mode", () => {
     const view = buildIntercom(
       satellite({
-        voiceSwitches: [{ entityId: "switch.mute", name: "Mute", on: true }],
+        voiceSwitches: [
+          { entityId: "switch.mute", name: "Mute", on: true },
+          { entityId: "switch.dnd", name: "Intercom do not disturb", on: true },
+        ],
         volumes: [
           {
             entityId: "number.media",
@@ -182,78 +184,70 @@ describe("buildIntercom", () => {
     assert.equal(view, undefined);
   });
 
-  it("uses the answer mode select when that entity is present", () => {
-    const options = ["Ring", "Answer automatically", "Do not disturb"];
+  it("maps Ring, Answer, and DND onto the answer-mode options", () => {
     const view = buildIntercom(
       satellite({
-        settings: [
-          {
-            entityId: "select.answer",
-            name: "Intercom answer mode",
-            options,
-            value: "Ring",
-          },
-        ],
+        voiceSwitches: [{ entityId: "switch.enabled", name: "Intercom enabled", on: true }],
+        settings: [answerSelect("select.answer", "Ring")],
       }),
     );
-    assert.deepEqual(view, {
-      switches: [],
-      answer: {
-        entityId: "select.answer",
-        name: "Intercom answer mode",
-        options,
-        value: "Ring",
-        disabled: false,
-      },
-      doNotDisturb: absentDisturb(),
-    });
+    assert.equal(view?.enabledId, "switch.enabled");
+    assert.equal(view?.enabledOn, true);
+    assert.equal(view?.answerId, "select.answer");
+    assert.deepEqual(buttons(view), [
+      ["off", "Off", false, false, ""],
+      ["ring", "Ring", true, false, "Ring"],
+      ["answer", "Answer", false, false, "Answer automatically"],
+      ["dnd", "DND", false, false, "Do not disturb"],
+    ]);
+    assert.equal(view?.buttons.filter((button) => button.selected).length, 1);
   });
 
-  it("prefers a voice answer mode select and does not keep unknown as the selection", () => {
+  it("selects Off when the intercom is disabled", () => {
     const view = buildIntercom(
       satellite({
-        voiceSelects: [
-          {
-            entityId: "select.voice",
-            name: "  Intercom answer mode  ",
-            options: ["Ring", "Answer automatically", "Do not disturb"],
-            value: "unknown",
-          },
-        ],
-        settings: [
-          {
-            entityId: "select.settings",
-            name: "Intercom answer mode",
-            options: ["Ring"],
-            value: "Ring",
-          },
-        ],
+        voiceSwitches: [{ entityId: "switch.enabled", name: "  Intercom enabled  ", on: false }],
+        settings: [answerSelect("select.answer", "Do not disturb")],
       }),
     );
-    assert.deepEqual(view?.answer, {
-      entityId: "select.voice",
-      name: "  Intercom answer mode  ",
-      options: ["Ring", "Answer automatically", "Do not disturb"],
-      value: "",
-      disabled: false,
-    });
+    assert.deepEqual(buttons(view), [
+      ["off", "Off", true, false, ""],
+      ["ring", "Ring", false, false, "Ring"],
+      ["answer", "Answer", false, false, "Answer automatically"],
+      ["dnd", "DND", false, false, "Do not disturb"],
+    ]);
   });
 
-  it("keeps answer mode disabled with no selection when the select is absent", () => {
+  it("prefers a voice answer mode select and does not treat unknown as a mode", () => {
+    const view = buildIntercom(
+      satellite({
+        voiceSwitches: [{ entityId: "switch.enabled", name: "Intercom enabled", on: true }],
+        voiceSelects: [answerSelect("select.voice", "unknown", "  Intercom answer mode  ")],
+        settings: [answerSelect("select.settings", "Ring", "Intercom answer mode")],
+      }),
+    );
+    assert.equal(view?.answerId, "select.voice");
+    assert.equal(view?.buttons.find((button) => button.selected), undefined);
+    assert.equal(view?.buttons.find((button) => button.id === "ring")?.disabled, false);
+  });
+
+  it("disables the mode buttons when the answer select is absent", () => {
     const view = buildIntercom(
       satellite({
         voiceSwitches: [{ entityId: "switch.enabled", name: "Intercom enabled", on: false }],
       }),
     );
-    assert.deepEqual(view, {
-      switches: [{ entityId: "switch.enabled", name: "Intercom enabled", on: false }],
-      answer: absentAnswer(),
-      doNotDisturb: absentDisturb(),
-    });
+    assert.equal(view?.answerId, undefined);
     assert.equal(view?.volume, undefined);
+    assert.deepEqual(buttons(view), [
+      ["off", "Off", true, false, ""],
+      ["ring", "Ring", false, true, ""],
+      ["answer", "Answer", false, true, ""],
+      ["dnd", "DND", false, true, ""],
+    ]);
   });
 
-  it("keeps intercom volume when the device has no intercom switches", () => {
+  it("keeps intercom volume and disables every button when the switches are absent", () => {
     const view = buildIntercom(
       satellite({
         volumes: [
@@ -268,302 +262,166 @@ describe("buildIntercom", () => {
         ],
       }),
     );
-    assert.deepEqual(view, {
-      switches: [],
-      volume: {
-        entityId: "number.intercom_volume",
-        name: "Intercom volume",
-        min: 0,
-        max: 100,
-        step: 5,
-        value: 60,
-      },
-      answer: absentAnswer(),
-      doNotDisturb: absentDisturb(),
-    });
+    assert.equal(view?.volume?.entityId, "number.intercom_volume");
+    assert.equal(view?.enabledId, undefined);
+    assert.equal(view?.buttons.every((button) => button.disabled && !button.selected), true);
   });
 
-  it("reads enabled and do not disturb from the voice switches, enabled first", () => {
+  it("matches a device-prefixed enabled switch and answer mode", () => {
     const view = buildIntercom(
       satellite({
-        voiceSwitches: [
-          { entityId: "switch.dnd", name: "Intercom do not disturb", on: false },
-          { entityId: "switch.mute", name: "Mute", on: true },
-          { entityId: "switch.enabled", name: "  Intercom enabled  ", on: true },
+        settings: [
+          { entityId: "switch.enabled", name: "Updoot2 Intercom enabled", on: true },
+          answerSelect("select.answer", "Answer automatically", "Updoot2 Intercom answer mode"),
         ],
       }),
     );
-    assert.deepEqual(view, {
-      switches: [{ entityId: "switch.enabled", name: "  Intercom enabled  ", on: true }],
-      answer: absentAnswer(),
-      doNotDisturb: {
-        entityId: "switch.dnd",
-        name: "Intercom do not disturb",
-        on: false,
-        disabled: false,
-      },
-    });
+    assert.equal(view?.enabledId, "switch.enabled");
+    assert.equal(view?.answerId, "select.answer");
+    assert.equal(view?.buttons.find((button) => button.id === "answer")?.selected, true);
   });
 
-  it("keeps a section when only one intercom switch exists", () => {
-    const view = buildIntercom(
-      satellite({
-        voiceSwitches: [{ entityId: "switch.dnd", name: "INTERCOM DO NOT DISTURB", on: true }],
-      }),
-    );
-    assert.deepEqual(view, {
-      switches: [],
-      answer: absentAnswer(),
-      doNotDisturb: {
-        entityId: "switch.dnd",
-        name: "INTERCOM DO NOT DISTURB",
-        on: true,
-        disabled: false,
-      },
-    });
-  });
-
-  it("uses a settings switch when the voice list does not have it", () => {
-    const view = buildIntercom(
-      satellite({
-        settings: [{ entityId: "switch.enabled", name: "Intercom enabled", on: false }],
-      }),
-    );
-    assert.deepEqual(view, {
-      switches: [{ entityId: "switch.enabled", name: "Intercom enabled", on: false }],
-      answer: absentAnswer(),
-      doNotDisturb: absentDisturb(),
-    });
-  });
-
-  it("uses a settings do not disturb switch when the voice list does not have it", () => {
-    const view = buildIntercom(
-      satellite({
-        settings: [{ entityId: "switch.dnd", name: "Intercom do not disturb", on: true }],
-      }),
-    );
-    assert.deepEqual(view?.doNotDisturb, {
-      entityId: "switch.dnd",
-      name: "Intercom do not disturb",
-      on: true,
-      disabled: false,
-    });
-  });
-
-  it("prefers the voice do not disturb switch over a settings switch of the same name", () => {
-    const view = buildIntercom(
-      satellite({
-        voiceSwitches: [{ entityId: "switch.voice", name: "Intercom do not disturb", on: false }],
-        settings: [{ entityId: "switch.settings", name: "Intercom do not disturb", on: true }],
-      }),
-    );
-    assert.equal(view?.doNotDisturb?.entityId, "switch.voice");
-    assert.equal(view?.doNotDisturb?.on, false);
-    assert.equal(view?.doNotDisturb?.disabled, false);
-  });
-
-  it("prefers the voice switch over a settings switch of the same name", () => {
+  it("prefers the voice enabled switch over a settings switch of the same name", () => {
     const view = buildIntercom(
       satellite({
         voiceSwitches: [{ entityId: "switch.voice", name: "Intercom enabled", on: true }],
         settings: [{ entityId: "switch.settings", name: "Intercom enabled", on: false }],
       }),
     );
-    assert.equal(view?.switches[0]?.entityId, "switch.voice");
-    assert.equal(view?.switches[0]?.on, true);
+    assert.equal(view?.enabledId, "switch.voice");
+    assert.equal(view?.enabledOn, true);
   });
 });
 
 describe("renderIntercom", () => {
   it("clears the parent when there is no section", () => {
     const parent = host();
-    render(parent, {
-      switches: [{ entityId: "switch.enabled", name: "Intercom enabled", on: true }],
-    });
-    assert.equal(parent.querySelector(".rd-intercom") !== null, true);
+    parent.append(new El("p"));
     render(parent, undefined);
     assert.equal(parent.children.length, 0);
   });
 
-  it("shows the switch names and On or Off in large rows", () => {
-    const parent = host();
-    render(parent, {
-      switches: [{ entityId: "switch.enabled", name: "Intercom enabled", on: true }],
-      doNotDisturb: {
-        entityId: "switch.dnd",
-        name: "Intercom do not disturb",
-        on: false,
-        disabled: false,
-      },
-    });
-    const section = parent.querySelector(".rd-intercom");
-    assert.equal(section?.tagName, "SECTION");
-    assert.equal(section?.getAttribute("aria-label"), "Intercom");
-    assert.equal(parent.querySelector(".rd-intercom-label"), null);
-    const buttons = parent.querySelectorAll(".rd-intercom-switch");
-    assert.equal(buttons.length, 2);
-    assert.equal(buttons[0]?.querySelector(".rd-intercom-name")?.textContent, "Intercom enabled");
-    assert.equal(buttons[0]?.querySelector(".rd-intercom-value")?.textContent, "On");
-    assert.equal(buttons[0]?.getAttribute("aria-checked"), "true");
-    assert.equal(buttons[0]?.dataset.entity, "switch.enabled");
-    assert.equal(buttons[1]?.querySelector(".rd-intercom-name")?.textContent, "Intercom do not disturb");
-    assert.equal(buttons[1]?.querySelector(".rd-intercom-value")?.textContent, "Off");
-    assert.equal(buttons[1]?.getAttribute("aria-checked"), "false");
-    const text = parent.textContent;
-    assert.equal(text.includes("ringing"), false);
-    assert.equal(text.includes("Kitchen"), false);
-    assert.equal(text.includes("idle"), false);
-  });
-
-  it("calls switch.turn_on or switch.turn_off with the entity target", () => {
-    const parent = host();
-    const calls: Array<Parameters<IntercomSwitchChange>> = [];
-    const onSwitch: IntercomSwitchChange = (domain, service, data, target) => {
-      calls.push([domain, service, data, target]);
-    };
-    render(parent, {
-      switches: [{ entityId: "switch.enabled", name: "Intercom enabled", on: true }],
-      doNotDisturb: {
-        entityId: "switch.dnd",
-        name: "Intercom do not disturb",
-        on: false,
-        disabled: false,
-      },
-    }, onSwitch);
-    const buttons = parent.querySelectorAll(".rd-intercom-switch");
-    buttons[1]?.click();
-    buttons[0]?.click();
-    buttons[1]?.click();
-    assert.deepEqual(calls, [
-      ["switch", "turn_on", undefined, { entity_id: "switch.dnd" }],
-      ["switch", "turn_off", undefined, { entity_id: "switch.enabled" }],
-      ["switch", "turn_off", undefined, { entity_id: "switch.dnd" }],
-    ]);
-    assert.equal(buttons[0]?.getAttribute("aria-checked"), "false");
-    assert.equal(buttons[0]?.querySelector(".rd-intercom-value")?.textContent, "Off");
-    assert.equal(buttons[1]?.getAttribute("aria-checked"), "false");
-    assert.equal(buttons[0]?.className.includes("rd-intercom-switch-on"), false);
-    assert.equal(buttons[1]?.className.includes("rd-intercom-switch-on"), false);
-  });
-
-  it("calls select.select_option with the chosen answer mode", () => {
-    const parent = host();
-    const calls: Array<Parameters<IntercomSelectChange>> = [];
-    renderIntercom(
-      parent as unknown as HTMLElement,
-      {
-        switches: [{ entityId: "switch.enabled", name: "Intercom enabled", on: true }],
-        doNotDisturb: {
-          entityId: "switch.dnd",
-          name: "Intercom do not disturb",
-          on: false,
-          disabled: false,
-        },
-        answer: {
-          entityId: "select.answer",
-          name: "Intercom answer mode",
-          options: ["Ring", "Answer automatically", "Do not disturb"],
-          value: "Answer automatically",
-          disabled: false,
-        },
-      },
-      () => undefined,
-      undefined,
-      (domain, service, data, target) => {
-        calls.push([domain, service, data, target]);
-      },
+  it("puts a speaker icon and the volume slider above four equal buttons", () => {
+    const view = buildIntercom(
+      satellite({
+        voiceSwitches: [{ entityId: "switch.enabled", name: "Intercom enabled", on: true }],
+        settings: [answerSelect("select.answer", "Ring")],
+        volumes: [
+          {
+            entityId: "number.intercom_volume",
+            name: "Intercom volume",
+            min: 0,
+            max: 100,
+            step: 5,
+            value: 60,
+          },
+        ],
+      }),
     );
+    const parent = host();
+    const volumes: Array<[string, number]> = [];
+    render(parent, view, () => undefined, (entityId, value) => volumes.push([entityId, value]));
     const section = parent.querySelector(".rd-intercom");
     assert.deepEqual(
-      section?.children.map((child) => child.className),
-      ["rd-intercom-switch rd-intercom-switch-on", "rd-intercom-field", "rd-intercom-switch"],
+      section?.children.map((node) => node.className),
+      ["rd-intercom-volume", "rd-intercom-modes"],
     );
-    const select = parent.querySelector(".rd-intercom-select");
-    assert.equal(select?.disabled, false);
-    assert.equal(select?.dataset.entity, "select.answer");
-    assert.equal(select?.getAttribute("aria-label"), "Intercom answer mode");
-    assert.equal(select?.value, "Answer automatically");
+    const volume = section?.children[0];
+    assert.equal(volume?.querySelector(".rd-intercom-speaker") !== null, true);
+    assert.equal(volume?.textContent?.includes("Intercom"), false);
+    assert.equal(volume?.querySelector("input")?.getAttribute("aria-label"), "Intercom volume");
+    const slider = volume?.querySelector("input");
+    assert.ok(slider);
+    slider.value = "40";
+    slider.change();
+    assert.deepEqual(volumes, [["number.intercom_volume", 40]]);
+
+    const modes = parent.querySelectorAll(".rd-intercom-mode");
     assert.deepEqual(
-      select?.querySelectorAll("option").map((node) => node.textContent),
-      ["Ring", "Answer automatically", "Do not disturb"],
+      modes.map((button) => button.textContent),
+      ["Off", "Ring", "Answer", "DND"],
     );
-    assert.equal(parent.querySelector(".rd-intercom-select-name")?.textContent, "Intercom answer mode");
-    assert.equal(parent.querySelector(".rd-intercom-mark")?.getAttribute("aria-hidden"), "true");
-    assert.ok(select);
-    select.value = "Do not disturb";
-    select.change();
-    assert.deepEqual(calls, [
-      ["select", "select_option", { option: "Do not disturb" }, { entity_id: "select.answer" }],
-    ]);
+    assert.equal(modes.filter((button) => button.getAttribute("aria-pressed") === "true").length, 1);
+    assert.equal(modes[1]?.className.includes("rd-intercom-mode-on"), true);
   });
 
-  it("renders answer mode disabled, with no selection, when the select is absent", () => {
+  it("turns the intercom on and selects the answer mode", () => {
+    const view = buildIntercom(
+      satellite({
+        voiceSwitches: [{ entityId: "switch.enabled", name: "Intercom enabled", on: false }],
+        settings: [answerSelect("select.answer", "Ring")],
+      }),
+    );
     const parent = host();
-    const calls: Array<Parameters<IntercomSelectChange>> = [];
-    renderIntercom(
-      parent as unknown as HTMLElement,
-      {
-        switches: [{ entityId: "switch.enabled", name: "Intercom enabled", on: false }],
-        answer: absentAnswer(),
-      },
-      () => undefined,
+    const switches: Array<[string, string]> = [];
+    const selects: Array<[string, string]> = [];
+    render(
+      parent,
+      view,
+      (_domain, service, _data, target) => switches.push([service, target.entity_id]),
       undefined,
-      (domain, service, data, target) => {
-        calls.push([domain, service, data, target]);
-      },
+      (_domain, _service, data, target) => selects.push([data.option, target.entity_id]),
     );
-    const select = parent.querySelector(".rd-intercom-select");
-    assert.equal(parent.querySelector(".rd-intercom-field")?.className.includes("rd-intercom-field-disabled"), true);
-    assert.equal(parent.querySelector(".rd-intercom-select-name")?.textContent, "Intercom answer mode");
-    assert.equal(select?.getAttribute("aria-label"), "Intercom answer mode");
-    assert.equal(select?.disabled, true);
-    assert.equal(select?.value, "");
-    assert.equal(select?.dataset.entity, undefined);
-    assert.equal(select?.querySelectorAll("option").length, 0);
-    const text = parent.textContent;
-    assert.equal(text.includes("Ring"), false);
-    assert.equal(text.includes("Answer automatically"), false);
-    assert.equal(text.includes("Do not disturb"), false);
-    select?.change();
-    assert.deepEqual(calls, []);
-    assert.equal(parent.querySelectorAll(".rd-intercom-switch").length, 1);
-    assert.equal(parent.querySelector(".rd-intercom-volume"), null);
+    const modes = parent.querySelectorAll(".rd-intercom-mode");
+    modes[1]?.click();
+    assert.deepEqual(switches, [["turn_on", "switch.enabled"]]);
+    assert.deepEqual(selects, [["Ring", "select.answer"]]);
+    assert.equal(modes.filter((button) => button.getAttribute("aria-pressed") === "true").length, 1);
+    assert.equal(modes[1]?.getAttribute("aria-pressed"), "true");
+
+    const alreadyOn = buildIntercom(
+      satellite({
+        voiceSwitches: [{ entityId: "switch.enabled", name: "Intercom enabled", on: true }],
+        settings: [answerSelect("select.answer", "Ring")],
+      }),
+    );
+    const onHost = host();
+    const onSwitches: string[] = [];
+    const onSelects: string[] = [];
+    render(
+      onHost,
+      alreadyOn,
+      (_domain, service) => onSwitches.push(service),
+      undefined,
+      (_domain, _service, data) => onSelects.push(data.option),
+    );
+    const onModes = onHost.querySelectorAll(".rd-intercom-mode");
+    onModes[2]?.click();
+    onModes[3]?.click();
+    assert.deepEqual(onSelects, ["Answer automatically", "Do not disturb"]);
+    assert.deepEqual(onSwitches, []);
   });
 
-  it("renders do not disturb disabled and off, and ignores clicks, when the switch is absent", () => {
-    const parent = host();
-    const calls: Array<Parameters<IntercomSwitchChange>> = [];
+  it("turns the intercom off and does not call for a missing answer mode", () => {
     const view = buildIntercom(
       satellite({
         voiceSwitches: [{ entityId: "switch.enabled", name: "Intercom enabled", on: true }],
       }),
     );
-    render(parent, view, (domain, service, data, target) => {
-      calls.push([domain, service, data, target]);
-    });
-    const section = parent.querySelector(".rd-intercom");
-    assert.deepEqual(
-      section?.children.map((child) => child.tagName),
-      ["BUTTON", "LABEL", "BUTTON"],
+    const parent = host();
+    const switches: string[] = [];
+    const selects: string[] = [];
+    render(
+      parent,
+      view,
+      (_domain, service) => switches.push(service),
+      undefined,
+      () => selects.push("select"),
     );
-    const dnd = parent.querySelectorAll(".rd-intercom-switch")[1];
-    assert.equal(dnd?.querySelector(".rd-intercom-name")?.textContent, "Intercom do not disturb");
-    assert.equal(dnd?.querySelector(".rd-intercom-value")?.textContent, "Off");
-    assert.equal(dnd?.getAttribute("aria-checked"), "false");
-    assert.equal(dnd?.getAttribute("aria-label"), "Intercom do not disturb");
-    assert.equal(dnd?.getAttribute("role"), "switch");
-    assert.equal(dnd?.disabled, true);
-    assert.equal(dnd?.dataset.entity, undefined);
-    assert.equal(dnd?.className.includes("rd-intercom-switch-on"), false);
-    dnd?.click();
-    assert.deepEqual(calls, []);
-    assert.equal(dnd?.getAttribute("aria-checked"), "false");
-    assert.equal(dnd?.querySelector(".rd-intercom-value")?.textContent, "Off");
+    const modes = parent.querySelectorAll(".rd-intercom-mode");
+    modes[1]?.click();
+    modes[2]?.click();
+    modes[3]?.click();
+    assert.deepEqual(selects, []);
+    assert.deepEqual(switches, []);
+    modes[0]?.click();
+    assert.deepEqual(switches, ["turn_off"]);
+    assert.equal(modes[0]?.getAttribute("aria-pressed"), "true");
   });
 });
 
 describe("intercomCss", () => {
-  it("scopes every rule under an rd-intercom class and uses theme tokens", () => {
+  it("scopes every rule under an rd-intercom class and shares the mode row evenly", () => {
     const selectors = intercomCss
       .split("}")
       .map((block) => block.slice(0, block.indexOf("{")))
@@ -572,24 +430,20 @@ describe("intercomCss", () => {
     for (const selector of selectors) {
       assert.match(selector.trim(), /^\.rd-intercom/);
     }
-    assert.equal(intercomCss.includes("grid-template-columns"), false);
-    assert.match(intercomCss, /\.rd-intercom\s*\{[^}]*padding:\s*16px 16px 18px;/);
-    assert.match(intercomCss, /\.rd-intercom-switch:disabled\s*\{[^}]*cursor:\s*default;/);
-    assert.match(intercomCss, /\.rd-intercom-switch:disabled\s*\{[^}]*opacity:\s*0\.45;/);
+    assert.match(intercomCss, /\.rd-intercom-modes\s*\{[^}]*grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\)/);
+    assert.match(intercomCss, /\.rd-intercom-modes\s*\{[^}]*min-height:\s*112px/);
+    assert.match(intercomCss, /\.rd-intercom-mode:disabled\s*\{[^}]*cursor:\s*default;/);
+    assert.match(intercomCss, /\.rd-intercom-mode:disabled\s*\{[^}]*opacity:\s*0\.45;/);
     for (const token of ["--primary-text-color", "--secondary-text-color", "--primary-color"]) {
       assert.equal(intercomCss.includes(`var(${token})`), true);
     }
     for (const className of [
       "rd-intercom",
-      "rd-intercom-switch",
-      "rd-intercom-switch-on",
-      "rd-intercom-name",
-      "rd-intercom-value",
-      "rd-intercom-field",
-      "rd-intercom-field-disabled",
-      "rd-intercom-select",
-      "rd-intercom-select-name",
-      "rd-intercom-mark",
+      "rd-intercom-volume",
+      "rd-intercom-speaker",
+      "rd-intercom-modes",
+      "rd-intercom-mode",
+      "rd-intercom-mode-on",
     ]) {
       assert.equal(intercomCss.includes(`.${className}`), true);
     }

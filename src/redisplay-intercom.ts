@@ -1,16 +1,24 @@
 import type { SatelliteModel, SelectControl, SwitchControl, VolumeControl } from "./model";
-import { formatVolumeReadout } from "./redisplay";
+import { formatVolumeReadout, speakerMark } from "./redisplay";
 
 const ENABLED = "intercom enabled";
-const DISTURB = "intercom do not disturb";
-const DISTURB_LABEL = "Intercom do not disturb";
 const ANSWER_MODE = "intercom answer mode";
-const ANSWER_LABEL = "Intercom answer mode";
 
-export interface IntercomSwitchView {
-  entityId: string;
-  name: string;
-  on: boolean;
+const MODES = [
+  { id: "ring", label: "Ring", match: "ring" },
+  { id: "answer", label: "Answer", match: "answer automatically" },
+  { id: "dnd", label: "DND", match: "do not disturb" },
+] as const;
+
+export type IntercomModeId = "off" | "ring" | "answer" | "dnd";
+
+export interface IntercomButtonView {
+  id: IntercomModeId;
+  label: string;
+  selected: boolean;
+  disabled: boolean;
+  /** Answer-mode option sent with select_option. Absent for Off and when that option is missing. */
+  option?: string;
 }
 
 export interface IntercomVolumeView {
@@ -22,39 +30,16 @@ export interface IntercomVolumeView {
   value: number | null;
 }
 
-export interface IntercomAnswerView {
-  /** Missing when the select is not in the registry. */
-  entityId?: string;
-  name: string;
-  options: string[];
-  /** Empty when nothing is selected. An absent select does not get a made-up mode. */
-  value: string;
-  disabled: boolean;
-}
-
-export interface IntercomDisturbView {
-  /** Missing when the switch is not in the registry. */
-  entityId?: string;
-  name: string;
-  /** False when the switch is absent. */
-  on: boolean;
-  disabled: boolean;
-}
-
 export interface IntercomView {
-  switches: IntercomSwitchView[];
-  /** Intercom volume, drawn like the Media volume slider. */
+  /** Intercom volume. Absent until that entity exists. */
   volume?: IntercomVolumeView;
-  /**
-   * Intercom answer mode. Set whenever the section is shown.
-   * Disabled, with no selection, when the select entity is absent.
-   */
-  answer?: IntercomAnswerView;
-  /**
-   * Intercom do not disturb. Set whenever the section is shown.
-   * Disabled and off when the switch entity is absent.
-   */
-  doNotDisturb?: IntercomDisturbView;
+  /** Intercom enabled. Absent when that switch is missing. */
+  enabledId?: string;
+  /** True when Intercom enabled is on. Absent when the switch is missing. */
+  enabledOn?: boolean;
+  /** Intercom answer mode. Absent when that select is missing. */
+  answerId?: string;
+  buttons: IntercomButtonView[];
 }
 
 /**
@@ -82,24 +67,22 @@ export type IntercomSelectChange = (
 ) => void;
 
 /**
- * Intercom enabled, Intercom answer mode, Intercom do not disturb, and Intercom volume.
- * Answer mode stays on the tab when its select is absent: disabled, with no selection.
- * Do not disturb stays on the tab when its switch is absent: disabled and off.
- * Intercom volume stays off the tab until that entity exists.
- * The Intercom and Intercom kiosk text sensors are not on SatelliteModel, so there is no call state.
+ * Intercom volume, then Off / Ring / Answer / DND.
+ * Off is Intercom enabled off. The other three turn that switch on and set
+ * Intercom answer mode. A button stays disabled when the entity it writes is missing.
+ * Intercom do not disturb is the same answer-mode value, so it is not a separate control.
  */
 export function buildIntercom(model: SatelliteModel): IntercomView | undefined {
   const enabled = findSwitch(model, ENABLED);
-  const switches = enabled ? [{ entityId: enabled.entityId, name: enabled.name, on: enabled.on }] : [];
-  const volume = model.volumes.find((item) => normalize(item.name) === "intercom volume");
   const answer = findAnswer(model);
-  const disturb = findDisturb(model);
-  if (switches.length === 0 && !volume && !answer && !disturb) return undefined;
-  const view: IntercomView = {
-    switches,
-    answer: answer ?? absentAnswer(),
-    doNotDisturb: disturb ?? absentDisturb(),
-  };
+  const volume = model.volumes.find((item) => matchesName(item.name, "intercom volume"));
+  if (!enabled && !answer && !volume) return undefined;
+  const view: IntercomView = { buttons: buildButtons(enabled, answer) };
+  if (enabled) {
+    view.enabledId = enabled.entityId;
+    view.enabledOn = enabled.on;
+  }
+  if (answer?.entityId) view.answerId = answer.entityId;
   if (volume) view.volume = volumeView(volume);
   return view;
 }
@@ -109,55 +92,24 @@ export const intercomCss = `
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 14px;
-  padding: 16px 16px 18px;
+  gap: 10px;
+  min-height: 158px;
   color: var(--primary-text-color);
-}
-.rd-intercom-switch {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  width: 100%;
-  margin: 0;
-  padding: 14px 12px;
-  border: 0;
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--primary-text-color) 6%, transparent);
-  color: var(--primary-text-color);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.rd-intercom-switch:focus-visible {
-  outline: 2px solid var(--primary-color);
-  outline-offset: 2px;
-}
-.rd-intercom-switch:disabled {
-  cursor: default;
-  opacity: 0.45;
-}
-.rd-intercom-switch-on {
-  background: color-mix(in srgb, var(--primary-color) 16%, transparent);
-}
-.rd-intercom-name {
-  color: var(--secondary-text-color);
-  font-size: 1.05rem;
-  line-height: 1.3;
-}
-.rd-intercom-value {
-  color: var(--primary-text-color);
-  font-size: 2.4rem;
-  font-weight: 500;
-  line-height: 1.05;
-}
-.rd-intercom-switch-on .rd-intercom-value {
-  color: var(--primary-color);
 }
 .rd-intercom-volume {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+.rd-intercom-speaker {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  color: var(--secondary-text-color);
+}
+.rd-intercom-speaker svg {
+  width: 22px;
+  height: 22px;
 }
 .rd-intercom-slider {
   flex: 1 1 auto;
@@ -171,64 +123,38 @@ export const intercomCss = `
   font-variant-numeric: tabular-nums;
   color: var(--secondary-text-color);
 }
-.rd-intercom-field {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 6px;
-  min-width: 0;
+.rd-intercom-modes {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  flex: 1 1 auto;
+  min-height: 112px;
+}
+.rd-intercom-mode {
+  height: 100%;
+  min-height: 112px;
   margin: 0;
-}
-.rd-intercom-select-name {
-  color: var(--secondary-text-color);
-  font-size: 0.92rem;
-  font-weight: 500;
-  line-height: 1.3;
-}
-.rd-intercom-control {
-  position: relative;
-  display: block;
-  min-width: 0;
-}
-.rd-intercom-select {
-  appearance: none;
-  -webkit-appearance: none;
-  display: block;
-  box-sizing: border-box;
-  width: 100%;
-  margin: 0;
-  padding: 9px 34px 9px 12px;
-  border: 1px solid var(--divider-color);
-  border-radius: 12px;
+  padding: 8px;
+  border: 0;
+  border-radius: 14px;
   background: color-mix(in srgb, var(--primary-text-color) 6%, transparent);
   color: var(--primary-text-color);
   font: inherit;
   font-size: 1.15rem;
-  font-weight: 500;
-  line-height: 1.25;
+  font-weight: 600;
   cursor: pointer;
 }
-.rd-intercom-select:focus-visible {
+.rd-intercom-mode-on {
+  background: color-mix(in srgb, var(--primary-color) 22%, transparent);
+  color: var(--primary-color);
+}
+.rd-intercom-mode:focus-visible {
   outline: 2px solid var(--primary-color);
   outline-offset: 2px;
 }
-.rd-intercom-select:disabled {
+.rd-intercom-mode:disabled {
   cursor: default;
-}
-.rd-intercom-field-disabled .rd-intercom-control {
   opacity: 0.45;
-}
-.rd-intercom-mark {
-  position: absolute;
-  top: 50%;
-  right: 13px;
-  width: 8px;
-  height: 8px;
-  margin-top: -6px;
-  border-right: 2px solid var(--secondary-text-color);
-  border-bottom: 2px solid var(--secondary-text-color);
-  transform: rotate(45deg);
-  pointer-events: none;
 }
 `;
 
@@ -239,21 +165,45 @@ export function renderIntercom(
   onVolume?: IntercomVolumeChange,
   onSelect?: IntercomSelectChange,
 ): void {
-  if (!view || (view.switches.length === 0 && !view.volume && !view.answer && !view.doNotDisturb)) {
+  if (!view || view.buttons.length === 0) {
     parent.replaceChildren();
     return;
   }
   const root = document.createElement("section");
   root.className = "rd-intercom";
   root.setAttribute("aria-label", "Intercom");
-  const enabled = view.switches.find((item) => normalize(item.name) === ENABLED);
-  const rest = view.switches.filter((item) => item !== enabled);
-  if (enabled) root.append(switchButton(enabled, onSwitch));
-  if (view.answer) root.append(answerField(view.answer, onSelect));
-  if (view.doNotDisturb) root.append(disturbButton(view.doNotDisturb, onSwitch));
-  for (const item of rest) root.append(switchButton(item, onSwitch));
   if (view.volume) root.append(volumeRow(view.volume, onVolume));
+  root.append(modeRow(view, onSwitch, onSelect));
   parent.replaceChildren(root);
+}
+
+function buildButtons(enabled: SwitchControl | undefined, answer: SelectControl | undefined): IntercomButtonView[] {
+  const off: IntercomButtonView = {
+    id: "off",
+    label: "Off",
+    selected: Boolean(enabled && !enabled.on),
+    disabled: !enabled,
+  };
+  const modes = MODES.map((mode): IntercomButtonView => {
+    const option = matchedOption(answer, mode.match);
+    const selected = Boolean(enabled?.on && option && normalize(answer?.value ?? "") === mode.match);
+    return {
+      id: mode.id,
+      label: mode.label,
+      selected,
+      disabled: !enabled || !answer || !option,
+      option,
+    };
+  });
+  return [off, ...modes];
+}
+
+function matchedOption(select: SelectControl | undefined, match: string): string | undefined {
+  if (!select) return undefined;
+  const options = select.options.slice();
+  const stored = select.value === "unknown" || select.value === "unavailable" ? "" : select.value;
+  if (stored && !options.includes(stored)) options.unshift(stored);
+  return options.find((option) => normalize(option) === match);
 }
 
 function volumeView(volume: VolumeControl): IntercomVolumeView {
@@ -270,7 +220,6 @@ function volumeView(volume: VolumeControl): IntercomVolumeView {
 function volumeRow(volume: IntercomVolumeView, onVolume: IntercomVolumeChange | undefined): HTMLElement {
   const row = document.createElement("div");
   row.className = "rd-intercom-volume";
-  const label = text("span", "rd-intercom-volume-label", "Intercom");
   const slider = document.createElement("input");
   slider.type = "range";
   slider.className = "rd-intercom-slider";
@@ -280,163 +229,98 @@ function volumeRow(volume: IntercomVolumeView, onVolume: IntercomVolumeChange | 
   slider.value = String(volume.value ?? volume.min);
   slider.dataset.entity = volume.entityId;
   slider.setAttribute("aria-label", "Intercom volume");
-  const readout = text("span", "rd-intercom-volume-value", volume.value === null ? "" : formatVolumeReadout(volume.value, volume.max));
+  const readout = document.createElement("span");
+  readout.className = "rd-intercom-volume-value";
+  readout.textContent = volume.value === null ? "" : formatVolumeReadout(volume.value, volume.max);
   slider.addEventListener("input", () => {
     readout.textContent = formatVolumeReadout(Number(slider.value), volume.max);
   });
   slider.addEventListener("change", () => {
     onVolume?.(volume.entityId, Number(slider.value));
   });
-  row.append(label, slider, readout);
+  row.append(speakerMark("rd-intercom-speaker"), slider, readout);
   return row;
 }
 
-function absentAnswer(): IntercomAnswerView {
-  return { name: ANSWER_LABEL, options: [], value: "", disabled: true };
+function modeRow(
+  view: IntercomView,
+  onSwitch: IntercomSwitchChange,
+  onSelect: IntercomSelectChange | undefined,
+): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "rd-intercom-modes";
+  for (const item of view.buttons) row.append(modeButton(row, view, item, onSwitch, onSelect));
+  return row;
 }
 
-function absentDisturb(): IntercomDisturbView {
-  return { name: DISTURB_LABEL, on: false, disabled: true };
-}
-
-function findDisturb(model: SatelliteModel): IntercomDisturbView | undefined {
-  const found = findSwitch(model, DISTURB);
-  if (!found) return undefined;
-  return { entityId: found.entityId, name: found.name, on: found.on, disabled: false };
-}
-
-function findAnswer(model: SatelliteModel): IntercomAnswerView | undefined {
-  const voice = model.voiceSelects.find((item) => normalize(item.name) === ANSWER_MODE);
-  if (voice) return presentAnswer(voice);
-  for (const item of model.settings) {
-    if (isSelect(item) && normalize(item.name) === ANSWER_MODE) return presentAnswer(item);
-  }
-  return undefined;
-}
-
-function presentAnswer(select: SelectControl): IntercomAnswerView {
-  const stored = select.value === "unknown" || select.value === "unavailable" ? "" : select.value;
-  const options = select.options.slice();
-  if (stored && !options.includes(stored)) options.unshift(stored);
-  return {
-    entityId: select.entityId,
-    name: select.name,
-    options,
-    value: stored,
-    disabled: false,
-  };
-}
-
-function isSelect(control: SatelliteModel["settings"][number]): control is SelectControl {
-  return "options" in control;
-}
-
-function answerField(item: IntercomAnswerView, onSelect: IntercomSelectChange | undefined): HTMLElement {
-  const entityId = item.disabled ? undefined : item.entityId;
-  const label = document.createElement("label");
-  label.className = entityId ? "rd-intercom-field" : "rd-intercom-field rd-intercom-field-disabled";
-  const caption = entityId ? item.name : ANSWER_LABEL;
-  const name = text("span", "rd-intercom-select-name", caption);
-  const control = document.createElement("span");
-  control.className = "rd-intercom-control";
-  const select = document.createElement("select");
-  select.className = "rd-intercom-select";
-  select.setAttribute("aria-label", caption);
-  if (!entityId) {
-    select.disabled = true;
-    select.value = "";
-  } else {
-    select.dataset.entity = entityId;
-    fillSelect(select, item);
-    select.addEventListener("change", () => {
-      const option = select.value;
-      if (!option) return;
-      onSelect?.("select", "select_option", { option }, { entity_id: entityId });
-    });
-  }
-  const mark = document.createElement("span");
-  mark.className = "rd-intercom-mark";
-  mark.setAttribute("aria-hidden", "true");
-  control.append(select, mark);
-  label.append(name, control);
-  return label;
-}
-
-/** A value the entity did not report stays unselected, so the first option is not shown as chosen. */
-function fillSelect(select: HTMLSelectElement, item: IntercomAnswerView): void {
-  const chosen = item.value && item.options.includes(item.value) ? item.value : "";
-  const nodes: HTMLOptionElement[] = [];
-  if (!chosen) {
-    const blank = document.createElement("option");
-    blank.value = "";
-    blank.textContent = "";
-    nodes.push(blank);
-  }
-  for (const option of item.options) {
-    const node = document.createElement("option");
-    node.value = option;
-    node.textContent = option;
-    nodes.push(node);
-  }
-  select.replaceChildren(...nodes);
-  select.value = chosen;
-}
-
-function findSwitch(model: SatelliteModel, name: string): SwitchControl | undefined {
-  const voice = model.voiceSwitches.find((item) => normalize(item.name) === name);
-  if (voice) return voice;
-  for (const item of model.settings) {
-    if ("on" in item && normalize(item.name) === name) return item;
-  }
-  return undefined;
-}
-
-function normalize(name: string): string {
-  return name.trim().toLowerCase();
-}
-
-function text(tag: "p" | "span", className: string, value: string): HTMLElement {
-  const node = document.createElement(tag);
-  node.className = className;
-  node.textContent = value;
-  return node;
-}
-
-function disturbButton(item: IntercomDisturbView, onSwitch: IntercomSwitchChange): HTMLButtonElement {
-  if (!item.disabled && item.entityId) {
-    return switchButton({ entityId: item.entityId, name: item.name, on: item.on }, onSwitch);
-  }
+function modeButton(
+  row: HTMLElement,
+  view: IntercomView,
+  item: IntercomButtonView,
+  onSwitch: IntercomSwitchChange,
+  onSelect: IntercomSelectChange | undefined,
+): HTMLButtonElement {
   const button = document.createElement("button");
   button.type = "button";
-  button.disabled = true;
-  button.className = "rd-intercom-switch";
-  button.setAttribute("role", "switch");
-  button.setAttribute("aria-label", DISTURB_LABEL);
-  button.setAttribute("aria-checked", "false");
-  button.append(text("span", "rd-intercom-name", DISTURB_LABEL), text("span", "rd-intercom-value", "Off"));
-  return button;
-}
-
-function switchButton(item: IntercomSwitchView, onSwitch: IntercomSwitchChange): HTMLButtonElement {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.dataset.entity = item.entityId;
-  button.setAttribute("role", "switch");
-  button.setAttribute("aria-label", item.name);
-  const name = text("span", "rd-intercom-name", item.name);
-  const value = text("span", "rd-intercom-value", "");
-  button.append(name, value);
-  paint(button, value, item.on);
+  button.className = item.selected ? "rd-intercom-mode rd-intercom-mode-on" : "rd-intercom-mode";
+  button.disabled = item.disabled;
+  button.textContent = item.label;
+  button.setAttribute("data-mode", item.id);
+  button.setAttribute("aria-pressed", item.selected ? "true" : "false");
   button.addEventListener("click", () => {
-    const on = button.getAttribute("aria-checked") !== "true";
-    paint(button, value, on);
-    onSwitch("switch", on ? "turn_on" : "turn_off", undefined, { entity_id: item.entityId });
+    if (button.disabled) return;
+    if (item.id === "off") {
+      if (!view.enabledId) return;
+      paintPressed(row, "off");
+      onSwitch("switch", "turn_off", undefined, { entity_id: view.enabledId });
+      return;
+    }
+    if (!view.answerId || !item.option) return;
+    paintPressed(row, item.id);
+    if (view.enabledId && view.enabledOn === false) {
+      onSwitch("switch", "turn_on", undefined, { entity_id: view.enabledId });
+    }
+    onSelect?.("select", "select_option", { option: item.option }, { entity_id: view.answerId });
   });
   return button;
 }
 
-function paint(button: HTMLButtonElement, value: HTMLElement, on: boolean): void {
-  button.className = on ? "rd-intercom-switch rd-intercom-switch-on" : "rd-intercom-switch";
-  button.setAttribute("aria-checked", on ? "true" : "false");
-  value.textContent = on ? "On" : "Off";
+function paintPressed(row: HTMLElement, id: string): void {
+  const buttons = row.querySelectorAll(".rd-intercom-mode");
+  buttons.forEach((node) => {
+    const on = node.getAttribute("data-mode") === id;
+    node.className = on ? "rd-intercom-mode rd-intercom-mode-on" : "rd-intercom-mode";
+    node.setAttribute("aria-pressed", on ? "true" : "false");
+  });
+}
+
+function findAnswer(model: SatelliteModel): SelectControl | undefined {
+  const voice = model.voiceSelects.find((item) => matchesName(item.name, ANSWER_MODE));
+  if (voice) return voice;
+  for (const item of model.settings) {
+    if (isSelect(item) && matchesName(item.name, ANSWER_MODE)) return item;
+  }
+  return undefined;
+}
+
+function isSelect(control: SatelliteModel["settings"][number]): control is SelectControl {
+  return "options" in control && !("on" in control);
+}
+
+function findSwitch(model: SatelliteModel, name: string): SwitchControl | undefined {
+  const voice = model.voiceSwitches.find((item) => matchesName(item.name, name));
+  if (voice) return voice;
+  for (const item of model.settings) {
+    if ("on" in item && !("options" in item) && matchesName(item.name, name)) return item;
+  }
+  return undefined;
+}
+
+function matchesName(shown: string, wanted: string): boolean {
+  const name = normalize(shown);
+  return name === wanted || name.endsWith(` ${wanted}`);
+}
+
+function normalize(name: string): string {
+  return name.trim().toLowerCase();
 }

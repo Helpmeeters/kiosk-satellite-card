@@ -95,7 +95,7 @@ class DomNode {
   querySelectorAll(selector: string): DomNode[] {
     const matches: DomNode[] = [];
     const walk = (node: DomNode): void => {
-      if (node.className.split(/\s+/).includes(selector.slice(1))) matches.push(node);
+      if (classTokens(node).includes(selector.slice(1))) matches.push(node);
       for (const child of node.children) walk(child);
     };
     for (const child of this.children) walk(child);
@@ -103,9 +103,14 @@ class DomNode {
   }
 }
 
+function classTokens(node: DomNode): string[] {
+  const value = node.className as unknown;
+  if (typeof value !== "string") return [];
+  return value.split(/\s+/).filter(Boolean);
+}
+
 function classNames(node: DomNode): string[] {
-  const names = node.className.split(/\s+/).filter(Boolean);
-  return names.concat(node.children.flatMap(classNames));
+  return classTokens(node).concat(node.children.flatMap(classNames));
 }
 
 function textOf(node: DomNode): string {
@@ -347,6 +352,7 @@ describe("renderAgent", () => {
       node.owner = agentDocument;
       return node;
     },
+    createElementNS: undefined as ((namespace: string, tag: string) => DomNode) | undefined,
   };
   (globalThis as { document: typeof agentDocument }).document = agentDocument;
 
@@ -566,14 +572,20 @@ describe("renderAgent", () => {
     assert.deepEqual(
       section.children.map((node) => node.className),
       [
+        "rd-agent-volume",
         "rd-agent-row",
         "rd-agent-row",
         "rd-agent-row rd-agent-row-aside",
         "rd-agent-row",
-        "rd-agent-volume",
         "rd-agent-row",
       ],
     );
+    const volume = section.children[0];
+    assert.ok(volume);
+    assert.equal(volume.className, "rd-agent-volume");
+    assert.equal(volume.querySelector(".rd-agent-speaker") !== null, true);
+    assert.equal(textOf(volume).includes("Assistant"), false);
+    assert.equal(volume.querySelector(".rd-agent-slider")?.getAttribute("aria-label"), "Assistant volume");
     const rows = parent.querySelectorAll(".rd-agent-row");
     assert.deepEqual(rows.map(controlLabels), [
       ["Wake word", "Wake word 2"],
@@ -643,6 +655,43 @@ describe("renderAgent", () => {
     const gateRows = gateOnly.querySelectorAll(".rd-agent-row");
     assert.deepEqual(gateRows.map(controlLabels), [["Noise gate"]]);
     assert.equal(gateRows[0]?.className.includes("rd-agent-row-single"), true);
+  });
+
+  it("paints assistant volume when the speaker icon is an SVG", () => {
+    agentDocument.createElementNS = (_namespace: string, tag: string) => {
+      const node = new DomNode(tag);
+      node.owner = agentDocument;
+      const setAttribute = node.setAttribute.bind(node);
+      node.setAttribute = (name: string, value: string) => {
+        setAttribute(name, value);
+        if (name === "class") {
+          (node as unknown as { className: { baseVal: string } }).className = { baseVal: value };
+        }
+      };
+      return node;
+    };
+    try {
+      const view = buildAgent(
+        satellite({
+          volumes: [{ entityId: "number.assistant", name: "Assistant volume", min: 0, max: 100, step: 5, value: 40 }],
+          voiceSelects: [select("select.wake", "Wake word", ["Hey Jarvis"], "Hey Jarvis")],
+        }),
+      );
+      const parent = mount(view);
+      const section = parent.querySelector(".rd-agent");
+      assert.ok(section);
+      const speaker = section.children[0]?.children[0];
+      assert.equal(speaker?.tagName, "svg");
+      assert.equal(speaker?.getAttribute("class"), "rd-agent-speaker");
+      assert.equal(typeof speaker?.className, "object");
+      const slider = section.querySelector(".rd-agent-slider");
+      assert.equal(slider?.getAttribute("aria-label"), "Assistant volume");
+      assert.equal(slider?.value, "40");
+      renderAgent(parent as unknown as HTMLElement, view, () => undefined);
+      assert.equal(section.querySelector(".rd-agent-slider")?.value, "40");
+    } finally {
+      agentDocument.createElementNS = undefined;
+    }
   });
 
   it("toggles Chimes and Noise gate on a shared row and leaves Mute out", () => {

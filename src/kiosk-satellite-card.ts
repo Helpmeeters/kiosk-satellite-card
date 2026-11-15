@@ -78,7 +78,7 @@ const DAYS: ReadonlyArray<readonly [string, string]> = [
   ["sun", "Sun"],
 ];
 
-const RELEASE_MARKER = "kiosk-satellite-card@0.1.13";
+const RELEASE_MARKER = "kiosk-satellite-card@0.1.14";
 
 const CONFIG_FORM = {
   schema: [
@@ -662,7 +662,10 @@ function unwrapAlarmPayload(result: unknown): Record<string, unknown> | undefine
 
 function daysOf(value: unknown): string[] {
   if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string" && item.length > 0);
-  if (typeof value === "string" && value.trim()) return value.split(/[,\s]+/).filter(Boolean);
+  if (typeof value === "string" && value.trim()) {
+    if (value.trim().toLowerCase() === "once") return [];
+    return value.split(/[,\s]+/).filter(Boolean);
+  }
   return [];
 }
 

@@ -1,5 +1,5 @@
 import type { SatelliteModel, SwitchControl, VolumeControl } from "./model";
-import { formatVolumeReadout } from "./redisplay";
+import { formatVolumeReadout, speakerMark } from "./redisplay";
 
 export interface AgentSelectView {
   entityId: string;
@@ -181,6 +181,16 @@ export const agentCss = `
   grid-template-columns: auto 1fr auto;
   gap: 10px;
   align-items: center;
+}
+.rd-agent-speaker {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  color: var(--secondary-text-color);
+}
+.rd-agent-speaker svg {
+  width: 22px;
+  height: 22px;
 }
 .rd-agent-slider {
   width: 100%;
@@ -365,9 +375,9 @@ function rebuildRows(section: HTMLElement, parent: HTMLElement, rows: readonly A
     const node = fillRow(section, parent, existing, row);
     (row.afterVolume ? after : before).push(node);
   }
-  const nodes = [...before];
+  const nodes: HTMLElement[] = [];
   if (view.volume) nodes.push(existingVolume(section) ?? createVolume(parent, view.volume));
-  nodes.push(...after);
+  nodes.push(...before, ...after);
   section.replaceChildren(...nodes);
   if (view.volume) paintVolume(section, view.volume);
   for (const row of rows) {
@@ -508,7 +518,7 @@ function switchRows(section: HTMLElement): HTMLElement[] {
 function createVolume(parent: HTMLElement, volume: AgentVolumeView): HTMLElement {
   const row = document.createElement("div");
   row.className = "rd-agent-volume";
-  const label = text("span", "rd-agent-volume-label", "Assistant");
+  const label = speakerMark("rd-agent-speaker");
   const slider = document.createElement("input");
   slider.type = "range";
   slider.className = "rd-agent-slider";
@@ -606,7 +616,11 @@ function findClass(root: HTMLElement, className: string): HTMLElement | undefine
 }
 
 function hasClass(element: HTMLElement, className: string): boolean {
-  return element.className.split(/\s+/).includes(className);
+  const value = element.className as unknown;
+  // The speaker mark is an SVG. Its className is an SVGAnimatedString, so split would throw
+  // while the card is first painted and Home Assistant would show a configuration error.
+  if (typeof value !== "string") return false;
+  return value.split(/\s+/).includes(className);
 }
 
 function text(tag: "span", className: string, value: string): HTMLElement {

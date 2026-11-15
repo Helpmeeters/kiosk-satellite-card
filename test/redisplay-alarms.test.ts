@@ -199,6 +199,74 @@ describe("buildRedisplayAlarms", () => {
       ],
     );
   });
+
+  it("shows an alarm that exists but is turned off when the next alarm sensor is unknown", () => {
+    const listed = alarmListFromPayload({
+      ok: true,
+      alarms: [{ time: "10:00", label: "Hermes Alarm", days: "once", on: false }],
+    });
+    assert.deepEqual(listed.alarms, [{ time: "10:00", label: "Hermes Alarm", days: [], enabled: false }]);
+    const view = buildRedisplayAlarms(
+      satellite({
+        ...quiet,
+        scriptAvailable: true,
+        kioskName: "Updoot2",
+        nextAlarmId: "sensor.updoot2_next_alarm",
+        nextAlarm: "unknown",
+      }),
+      listed,
+    );
+    assert.ok(view);
+    assert.equal(view.nextAlarm, "None");
+    assert.equal(view.items.length, 1);
+    assert.equal(view.items[0]?.enabled, false);
+    assert.equal(view.items[0]?.summary, "10:00 Hermes Alarm");
+    assert.equal(view.items[0]?.detail, "Off");
+    assert.equal(view.items[0]?.action, "turn_on");
+    assert.equal(view.items[0]?.next, false);
+    const parent = host();
+    paint(parent, view, recorded().callbacks);
+    const row = parent.querySelector(".rd-alarms-item-off");
+    assert.ok(row);
+    assert.equal(row.classList.contains("rd-alarms-item"), true);
+    assert.equal(parent.querySelector(".rd-alarms-meta")?.textContent, "Off");
+    assert.equal(parent.querySelector('[data-rd-alarms="toggle"]')?.textContent, "Turn on");
+    assert.equal(parent.querySelector('[data-rd-alarms="clock"]')?.textContent, "None");
+  });
+
+  it("shows a next-alarm timestamp when the script list has no alarm at that time", () => {
+    const alarmAt = "2026-11-15T16:00:00+00:00";
+    const date = new Date(alarmAt);
+    const time = `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+    const missing = buildRedisplayAlarms(
+      satellite({
+        ...quiet,
+        scriptAvailable: true,
+        nextAlarmId: "sensor.updoot2_next_alarm",
+        nextAlarm: alarmAt,
+      }),
+      { error: "No kiosk answered" },
+    );
+    assert.equal(missing?.items.length, 1);
+    assert.equal(missing?.items[0]?.time, time);
+    assert.equal(missing?.items[0]?.label, "");
+    assert.deepEqual(missing?.items[0]?.days, []);
+    assert.equal(missing?.items[0]?.enabled, true);
+    assert.equal(missing?.items[0]?.next, true);
+
+    const listed = buildRedisplayAlarms(
+      satellite({
+        ...quiet,
+        scriptAvailable: true,
+        nextAlarmId: "sensor.updoot2_next_alarm",
+        nextAlarm: alarmAt,
+      }),
+      { alarms: [{ time, label: "Hermes Alarm", days: [], enabled: true }] },
+    );
+    assert.equal(listed?.items.length, 1);
+    assert.equal(listed?.items[0]?.label, "Hermes Alarm");
+    assert.equal(listed?.items[0]?.next, true);
+  });
 });
 
 describe("alarm list payload", () => {
@@ -219,6 +287,15 @@ describe("alarm list payload", () => {
       alarms: [{ time: "06:30", label: "Wake", enabled: true, on: false }, null, { days: ["fri"] }],
     });
     assert.deepEqual(enabledWins.alarms, [{ time: "06:30", label: "Wake", days: [], enabled: true }]);
+
+    const once = alarmListFromPayload({
+      alarms: [{ time: "10:00", label: "Hermes Alarm", days: "once", on: true }],
+    });
+    assert.deepEqual(once.alarms, [{ time: "10:00", label: "Hermes Alarm", days: [], enabled: true }]);
+    const weekdays = alarmListFromPayload({
+      alarms: [{ time: "09:00", label: "Week", days: ["mon", "tue"], on: true }],
+    });
+    assert.deepEqual(weekdays.alarms, [{ time: "09:00", label: "Week", days: ["mon", "tue"], enabled: true }]);
   });
 
   it("surfaces the script error and still stores a list shipped with the failure", () => {

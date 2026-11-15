@@ -600,6 +600,37 @@ describe("buildModel", () => {
   });
 });
 
+describe("buildModel alarm names", () => {
+  it("matches a next alarm whose name is prefixed with the device", () => {
+    const prefixed = model({
+      deviceId: "dev2",
+      devices: [{ id: "dev2", name: "Updoot2" }],
+      entities: [
+        entry("sensor.updoot2_next_alarm", { device_id: "dev2", name: "Updoot2 Next alarm" }),
+        entry("sensor.updoot2_vs_next_timer", { device_id: "dev2", name: "Updoot2 VS Next timer" }),
+        entry("binary_sensor.updoot2_alarm_ringing", { device_id: "dev2", name: "Updoot2 Alarm ringing" }),
+      ],
+      states: {
+        "sensor.updoot2_next_alarm": state("2026-11-08T16:00:00+00:00"),
+        "sensor.updoot2_vs_next_timer": state("00:10:00"),
+        "binary_sensor.updoot2_alarm_ringing": state("off"),
+      },
+    });
+    assert.equal(prefixed.alarms.nextAlarmId, "sensor.updoot2_next_alarm");
+    assert.equal(prefixed.alarms.nextAlarm, "2026-11-08T16:00:00+00:00");
+    assert.equal(prefixed.alarms.ringingId, "binary_sensor.updoot2_alarm_ringing");
+    assert.equal(JSON.stringify(prefixed.alarms).includes("vs_next_timer"), false);
+
+    const fromId = model({
+      deviceId: "dev1",
+      devices: [{ id: "dev1", name: "Updoot1" }],
+      entities: [entry("sensor.updoot_next_alarm", { device_id: "dev1" })],
+      states: { "sensor.updoot_next_alarm": state("2026-11-15T16:00:00+00:00") },
+    });
+    assert.equal(fromId.alarms.nextAlarmId, "sensor.updoot_next_alarm");
+  });
+});
+
 describe("alarmServiceCall", () => {
   it("sends action and kiosk, plus time, label, and days only when provided", () => {
     assert.deepEqual(alarmServiceCall("list", "Updoot1"), {

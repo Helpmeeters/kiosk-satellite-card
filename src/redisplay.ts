@@ -217,6 +217,31 @@ function displayVolume(volumes: readonly VolumeControl[], playerLevel: number | 
   };
 }
 
+const SPEAKER_PATH =
+  "M3 9v6h4l5 5V4L7 9H3zm13.5 3a5 5 0 0 1-2.5 4.03V7.97A5 5 0 0 1 16.5 12zM14 3.23v2.06A7 7 0 0 1 19 12a7 7 0 0 1-5 6.71v2.06A9 9 0 0 0 21 12a9 9 0 0 0-7-8.77z";
+
+/** Speaker mark for a volume row. A span stands in when the document cannot build SVG. */
+export function speakerMark(className: string): HTMLElement {
+  const creator = document as Document & {
+    createElementNS?: (namespace: string, name: string) => Element;
+  };
+  if (typeof creator.createElementNS === "function") {
+    const svg = creator.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("aria-hidden", "true");
+    svg.setAttribute("class", className);
+    const path = creator.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("fill", "currentColor");
+    path.setAttribute("d", SPEAKER_PATH);
+    svg.append(path);
+    return svg as unknown as HTMLElement;
+  }
+  const span = document.createElement("span");
+  span.className = className;
+  span.setAttribute("aria-hidden", "true");
+  return span;
+}
+
 function normalize(name: string): string {
   return name.trim().toLowerCase();
 }
