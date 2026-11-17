@@ -1,57 +1,65 @@
 # Helpmeet: Kiosk Satellite Card
 
-[![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=flat-square)](https://github.com/Helpmeeters/kiosk-satellite-card)
+[![Home Assistant Marketplace / HACS](https://img.shields.io/badge/Marketplace%20%2F%20HACS-Custom-41BDF5.svg?style=flat-square)](https://github.com/Helpmeeters/kiosk-satellite-card)
 [![GitHub Release](https://img.shields.io/github/v/release/Helpmeeters/kiosk-satellite-card?style=flat-square)](https://github.com/Helpmeeters/kiosk-satellite-card/releases)
 [![License: MIT](https://img.shields.io/github/license/Helpmeeters/kiosk-satellite-card?style=flat-square)](LICENSE)
 
-A [HACS](https://hacs.xyz/) Lovelace card for managing an audio-only **Kiosk Satellite** in Home Assistant — bringing together media playback, alarms and timers, intercom, and voice assistant controls in one compact, tabbed interface.
+A [Home Assistant Marketplace](https://www.home-assistant.io/integrations/marketplace/) / [HACS](https://hacs.xyz/) Lovelace card for managing an audio-only **Kiosk Satellite** in Home Assistant — bringing together media playback, alarms and timers, intercom, and voice assistant controls in one compact, tabbed interface.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Helpmeeters/kiosk-satellite-card/main/docs/images/now-playing.png" alt="Kiosk Satellite Card — Now Playing" width="460" />
+  <img src="https://raw.githubusercontent.com/Helpmeeters/kiosk-satellite-card/main/docs/images/collapsed-ask.png" alt="Kiosk Satellite Card — Compact view with Ask bar open" width="460" />
 </p>
 
 ## Features
 
+- **Compact Mode & Inline Ask** — Collapse the card into four interactive mini tiles for glanceable control, and send text queries directly to your satellite's configured voice assistant.
 - **Now Playing** — Album art, track info, live progress bar, media volume slider, playback controls, and favorite button.
 - **Alarms & Timers** — Side-by-side alarms and timers with inline creation, snooze, stop, and timer mute.
 - **Intercom** — Dedicated intercom volume and one-tap mode switching (**Off**, **Ring**, **Answer**, **DND**).
 - **Voice Agent** — Configure wake words, assistants, sensitivity, finished-speaking detection, chimes, and noise gate.
-- **Compact Mode** — Click the active tab to collapse the card into four interactive mini tiles for glanceable control.
-- **Inline Ask** — Send text queries directly to your satellite's configured voice assistant from the dashboard.
 - **Header Quick Controls** — Master volume popup, mic mute toggle, battery status, firmware update indicator with diagnostics, and device power/admin menu.
 
-## Screenshots
+## Panels
 
 <table>
   <tr>
     <td align="center" width="50%">
-      <img src="https://raw.githubusercontent.com/Helpmeeters/kiosk-satellite-card/main/docs/images/alarms-timers.png" alt="Alarms & Timers tab" /><br />
-      <sub><strong>Alarms &amp; Timers</strong></sub>
+      <img src="https://raw.githubusercontent.com/Helpmeeters/kiosk-satellite-card/main/docs/images/now-playing.png" alt="Now Playing panel" /><br />
+      <sub><strong>Now Playing</strong></sub>
     </td>
     <td align="center" width="50%">
-      <img src="https://raw.githubusercontent.com/Helpmeeters/kiosk-satellite-card/main/docs/images/intercom.png" alt="Intercom tab" /><br />
-      <sub><strong>Intercom</strong></sub>
+      <img src="https://raw.githubusercontent.com/Helpmeeters/kiosk-satellite-card/main/docs/images/alarms-timers.png" alt="Alarms & Timers panel" /><br />
+      <sub><strong>Alarms &amp; Timers</strong></sub>
     </td>
   </tr>
   <tr>
     <td align="center" width="50%">
-      <img src="https://raw.githubusercontent.com/Helpmeeters/kiosk-satellite-card/main/docs/images/voice-agent.png" alt="Voice Agent tab" /><br />
-      <sub><strong>Voice Agent</strong></sub>
+      <img src="https://raw.githubusercontent.com/Helpmeeters/kiosk-satellite-card/main/docs/images/intercom.png" alt="Intercom panel" /><br />
+      <sub><strong>Intercom</strong></sub>
     </td>
     <td align="center" width="50%">
-      <img src="https://raw.githubusercontent.com/Helpmeeters/kiosk-satellite-card/main/docs/images/compact-view.png" alt="Compact Mode" /><br />
-      <sub><strong>Compact Mode</strong></sub>
+      <img src="https://raw.githubusercontent.com/Helpmeeters/kiosk-satellite-card/main/docs/images/voice-agent.png" alt="Voice Agent panel" /><br />
+      <sub><strong>Voice Agent</strong></sub>
     </td>
   </tr>
 </table>
 
 ## Installation
 
-### HACS (Recommended)
+### Marketplace / HACS (Recommended)
 
 [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Helpmeeters&repository=kiosk-satellite-card&category=plugin)
 
-Or add it manually in HACS:
+*(This link opens **Marketplace** on Home Assistant 2026.11+ and **HACS** on earlier versions.)*
+
+#### Home Assistant Marketplace (2026.11+)
+
+1. Go to **Settings → Marketplace**.
+2. In the upper-right corner, select **Add from link**.
+3. Enter `https://github.com/Helpmeeters/kiosk-satellite-card` and select **Add** (if prompted for type, choose **Dashboard**).
+4. Open **Helpmeet: Kiosk Satellite Card** in the list and select **Install**.
+
+#### HACS (2026.10 and earlier)
 
 1. Open **HACS** in Home Assistant.
 2. Click the three-dot menu in the top right and select **Custom repositories**.
