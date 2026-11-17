@@ -24,22 +24,22 @@ A [Home Assistant Marketplace](https://www.home-assistant.io/integrations/market
 <table>
   <tr>
     <td align="center" width="50%">
-      <img src="https://raw.githubusercontent.com/Helpmeeters/kiosk-satellite-card/main/docs/images/now-playing.png" alt="Now Playing panel" /><br />
-      <sub><strong>Now Playing</strong></sub>
+      <strong>Now Playing</strong><br />
+      <img src="https://raw.githubusercontent.com/Helpmeeters/kiosk-satellite-card/main/docs/images/now-playing.png" alt="Now Playing panel" />
     </td>
     <td align="center" width="50%">
-      <img src="https://raw.githubusercontent.com/Helpmeeters/kiosk-satellite-card/main/docs/images/alarms-timers.png" alt="Alarms & Timers panel" /><br />
-      <sub><strong>Alarms &amp; Timers</strong></sub>
+      <strong>Alarms &amp; Timers</strong><br />
+      <img src="https://raw.githubusercontent.com/Helpmeeters/kiosk-satellite-card/main/docs/images/alarms-timers.png" alt="Alarms & Timers panel" />
     </td>
   </tr>
   <tr>
     <td align="center" width="50%">
-      <img src="https://raw.githubusercontent.com/Helpmeeters/kiosk-satellite-card/main/docs/images/intercom.png" alt="Intercom panel" /><br />
-      <sub><strong>Intercom</strong></sub>
+      <strong>Intercom</strong><br />
+      <img src="https://raw.githubusercontent.com/Helpmeeters/kiosk-satellite-card/main/docs/images/intercom.png" alt="Intercom panel" />
     </td>
     <td align="center" width="50%">
-      <img src="https://raw.githubusercontent.com/Helpmeeters/kiosk-satellite-card/main/docs/images/voice-agent.png" alt="Voice Agent panel" /><br />
-      <sub><strong>Voice Agent</strong></sub>
+      <strong>Voice Agent</strong><br />
+      <img src="https://raw.githubusercontent.com/Helpmeeters/kiosk-satellite-card/main/docs/images/voice-agent.png" alt="Voice Agent panel" />
     </td>
   </tr>
 </table>
