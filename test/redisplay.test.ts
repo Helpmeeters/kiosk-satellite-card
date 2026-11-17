@@ -5,6 +5,9 @@ import {
   buildGroupCandidates,
   buildRedisplay,
   computeJoinGroupMembers,
+  extractItemInLibrary,
+  extractQueueFavorite,
+  extractQueueTrackUri,
   formatClock,
   formatElapsed,
   formatVolumeReadout,
@@ -359,5 +362,75 @@ describe("media player parity helpers", () => {
       computeJoinGroupMembers("media_player.updoot2", ["media_player.updoot2", "media_player.updoot"], "media_player.living_room"),
       ["media_player.updoot", "media_player.living_room"],
     );
+  });
+
+  it("extracts current track favorite state from music_assistant.get_queue and media_content_id from snapshot", () => {
+    const snap = playerSnapshot({
+      state: "playing",
+      attributes: { media_content_id: "spotify://track/123", media_title: "Song" },
+    });
+    assert.equal(snap.contentId, "spotify://track/123");
+
+    assert.equal(
+      extractQueueFavorite(
+        { response: { "media_player.updoot2": { current_item: { media_item: { favorite: true } } } } },
+        "media_player.updoot2",
+      ),
+      true,
+    );
+    assert.equal(
+      extractQueueFavorite(
+        { "media_player.updoot2": { current_item: { media_item: { favorite: false } } } },
+        "media_player.updoot2",
+      ),
+      false,
+    );
+    assert.equal(extractQueueFavorite({}, "media_player.updoot2"), undefined);
+  });
+
+  it("extracts queue track uri and library membership from music/item_by_uri", () => {
+    assert.equal(
+      extractQueueTrackUri(
+        { response: { "media_player.updoot2": { current_item: { media_item: { uri: "spotify://track/123" } } } } },
+        "media_player.updoot2",
+      ),
+      "spotify://track/123",
+    );
+    assert.equal(extractQueueTrackUri({}, "media_player.updoot2"), undefined);
+
+    assert.equal(
+      extractItemInLibrary({
+        response: { response: { provider: "library", uri: "library://track/1912", provider_mappings: [{ in_library: true }] } },
+      }),
+      true,
+    );
+    assert.equal(
+      extractItemInLibrary({
+        response: { response: { provider: "spotify--abc", uri: "spotify--abc://track/1", provider_mappings: [{ in_library: null }] } },
+      }),
+      false,
+    );
+    assert.equal(extractItemInLibrary({}), undefined);
+  });
+
+  it("gates canAddToLibrary on player presence and option flag", () => {
+    const withPlayer = buildRedisplay(
+      satellite({ media: { playerId: "media_player.dot", state: "playing" } }),
+      undefined,
+      0,
+      undefined,
+      { canAddToLibrary: true },
+    );
+    assert.equal(withPlayer.canAddToLibrary, true);
+
+    const withoutOption = buildRedisplay(
+      satellite({ media: { playerId: "media_player.dot", state: "playing" } }),
+      undefined,
+      0,
+    );
+    assert.equal(withoutOption.canAddToLibrary, false);
+
+    const withoutPlayer = buildRedisplay(satellite({ media: {} }), undefined, 0, undefined, { canAddToLibrary: true });
+    assert.equal(withoutPlayer.canAddToLibrary, false);
   });
 });

@@ -39,6 +39,7 @@ export interface PlayerSnapshot {
   supportedFeatures?: number;
   appId?: string;
   source?: string;
+  contentId?: string;
   muted?: boolean;
   shuffle?: boolean;
   repeat?: RepeatMode;
@@ -79,6 +80,7 @@ export interface RedisplayView {
   canPower: boolean;
   canGroup: boolean;
   canBrowse: boolean;
+  canAddToLibrary: boolean;
   muted: boolean;
   shuffle: boolean;
   repeat: RepeatMode;
@@ -127,6 +129,7 @@ export function playerSnapshot(entity: EntityState | undefined): PlayerSnapshot 
   const supportedFeatures = finiteAttr(attributes, "supported_features");
   const appId = textAttr(attributes, "app_id");
   const source = textAttr(attributes, "source");
+  const contentId = textAttr(attributes, "media_content_id");
   const muted = boolAttr(attributes, "is_volume_muted");
   const shuffle = boolAttr(attributes, "shuffle");
   const repeat = repeatAttr(attributes);
@@ -142,6 +145,7 @@ export function playerSnapshot(entity: EntityState | undefined): PlayerSnapshot 
   if (supportedFeatures !== undefined) snapshot.supportedFeatures = supportedFeatures;
   if (appId) snapshot.appId = appId;
   if (source) snapshot.source = source;
+  if (contentId) snapshot.contentId = contentId;
   if (muted !== undefined) snapshot.muted = muted;
   if (shuffle !== undefined) snapshot.shuffle = shuffle;
   if (repeat) snapshot.repeat = repeat;
@@ -154,6 +158,7 @@ export function buildRedisplay(
   player: PlayerSnapshot | undefined,
   now: number,
   locale?: TimeLocale,
+  options?: { canAddToLibrary?: boolean },
 ): RedisplayView {
   if (model.missing) {
     return {
@@ -172,6 +177,7 @@ export function buildRedisplay(
       canPower: false,
       canGroup: false,
       canBrowse: false,
+      canAddToLibrary: false,
       muted: false,
       shuffle: false,
       repeat: "off",
@@ -207,6 +213,7 @@ export function buildRedisplay(
     canGroup: hasPlayer && supportsFeature(features, MEDIA_FEATURE.GROUPING),
     canBrowse:
       hasPlayer && (supportsFeature(features, MEDIA_FEATURE.BROWSE_MEDIA) || player?.appId === "music_assistant"),
+    canAddToLibrary: hasPlayer && options?.canAddToLibrary === true,
     muted: player?.muted === true,
     shuffle: player?.shuffle === true,
     repeat: player?.repeat ?? "off",
@@ -473,4 +480,56 @@ export function computeJoinGroupMembers(
   const set = new Set<string>(currentMembers.filter((id) => id !== playerId));
   set.add(targetId);
   return Array.from(set);
+}
+
+export function extractQueueFavorite(result: unknown, playerId: string): boolean | undefined {
+  const root = result && typeof result === "object" ? (result as Record<string, unknown>) : undefined;
+  const payload = (root?.response && typeof root.response === "object" ? root.response : root) as
+    | Record<string, unknown>
+    | undefined;
+  const queue = payload?.[playerId];
+  if (!queue || typeof queue !== "object") return undefined;
+  const currentItem = (queue as Record<string, unknown>).current_item;
+  if (!currentItem || typeof currentItem !== "object") return undefined;
+  const mediaItem = (currentItem as Record<string, unknown>).media_item;
+  if (!mediaItem || typeof mediaItem !== "object") return undefined;
+  const favorite = (mediaItem as Record<string, unknown>).favorite;
+  return typeof favorite === "boolean" ? favorite : undefined;
+}
+
+export function extractQueueTrackUri(result: unknown, playerId: string): string | undefined {
+  const root = result && typeof result === "object" ? (result as Record<string, unknown>) : undefined;
+  const payload = (root?.response && typeof root.response === "object" ? root.response : root) as
+    | Record<string, unknown>
+    | undefined;
+  const queue = payload?.[playerId];
+  if (!queue || typeof queue !== "object") return undefined;
+  const currentItem = (queue as Record<string, unknown>).current_item;
+  if (!currentItem || typeof currentItem !== "object") return undefined;
+  const mediaItem = (currentItem as Record<string, unknown>).media_item;
+  if (!mediaItem || typeof mediaItem !== "object") return undefined;
+  const uri = (mediaItem as Record<string, unknown>).uri;
+  return typeof uri === "string" && uri.length > 0 ? uri : undefined;
+}
+
+export function extractItemInLibrary(result: unknown): boolean | undefined {
+  const root = result && typeof result === "object" ? (result as Record<string, unknown>) : undefined;
+  const outer = (root?.response && typeof root.response === "object" ? root.response : root) as
+    | Record<string, unknown>
+    | undefined;
+  const item = (outer?.response && typeof outer.response === "object" ? outer.response : outer) as
+    | Record<string, unknown>
+    | undefined;
+  if (!item) return undefined;
+  if (item.provider === "library") return true;
+  if (typeof item.uri === "string" && item.uri.startsWith("library://")) return true;
+  if (Array.isArray(item.provider_mappings)) {
+    for (const mapping of item.provider_mappings) {
+      if (mapping && typeof mapping === "object" && (mapping as Record<string, unknown>).in_library === true) {
+        return true;
+      }
+    }
+    return false;
+  }
+  return typeof item.provider === "string" || typeof item.uri === "string" ? false : undefined;
 }

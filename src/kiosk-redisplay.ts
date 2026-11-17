@@ -10,6 +10,9 @@ import {
 import { buildModel, parseConfig, type DeviceEntry, type EntityState, type RegistryEntry, type SatelliteModel } from "./model";
 import {
   buildRedisplay,
+  extractItemInLibrary,
+  extractQueueFavorite,
+  extractQueueTrackUri,
   formatElapsed,
   formatVolumeReadout,
   playbackMix,
@@ -283,7 +286,7 @@ ha-card {
   height: 50%;
 }
 .transport button.icon.favorite,
-.transport button.icon.player-info {
+.transport button.icon.library {
   width: 34px;
   height: auto;
   aspect-ratio: 1;
@@ -291,9 +294,43 @@ ha-card {
   min-width: 24px;
 }
 .transport button.icon.favorite svg,
-.transport button.icon.player-info svg {
+.transport button.icon.library svg {
   width: 50%;
   height: 50%;
+}
+.transport button.icon.favorite,
+.transport button.icon.library {
+  transition: color 0.2s ease, background 0.2s ease, opacity 0.2s ease;
+}
+.transport button.icon.favorite.is-busy,
+.transport button.icon.library.is-busy {
+  opacity: 0.6;
+  pointer-events: none;
+}
+.transport button.icon.favorite.is-favorited,
+.transport button.icon.library.is-in-library {
+  color: var(--primary-color);
+  background: color-mix(in srgb, var(--primary-color) 16%, transparent);
+}
+.transport button.icon.favorite.is-pop svg,
+.transport button.icon.library.is-pop svg {
+  animation: rd-fav-pop 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.3);
+}
+.transport button.icon.favorite.is-error,
+.transport button.icon.library.is-error {
+  color: var(--error-color, #ba1a1a);
+  background: color-mix(in srgb, var(--error-color, #ba1a1a) 16%, transparent);
+}
+@keyframes rd-fav-pop {
+  0% {
+    transform: scale(1);
+  }
+  45% {
+    transform: scale(1.28);
+  }
+  100% {
+    transform: scale(1);
+  }
 }
 .stage .art.is-clickable,
 .stage .placeholder.is-clickable,
@@ -974,6 +1011,8 @@ const ICONS = {
   mute: "M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51A8.796 8.796 0 0 0 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3 3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06a8.99 8.99 0 0 0 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4 9.91 6.09 12 8.18V4z",
   stop: "M6 6h12v12H6z",
   heart: "M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z",
+  libraryAdd: "M19 11h-4v4h-2v-4H9V9h4V5h2v4h4m1-7H8a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2M4 6H2v14a2 2 0 0 0 2 2h14v-2H4V6z",
+  libraryIn: "M20 2H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-2 5h-3v5.5a2.5 2.5 0 0 1-5 0 2.5 2.5 0 0 1 2.5-2.5c.57 0 1.08.19 1.5.51V5h4v2zM4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6z",
 };
 
 const TABS = [
@@ -1004,6 +1043,10 @@ function alarmScriptAvailable(hass: Hass): boolean {
   return Boolean(hass.services?.script?.kiosk_satellite_alarms) || Boolean(hass.states?.["script.kiosk_satellite_alarms"]);
 }
 
+function massQueueAvailable(hass: Hass): boolean {
+  return Boolean(hass.services?.music_assistant?.get_queue && hass.services?.mass_queue?.send_command);
+}
+
 function faceSignature(view: RedisplayView, mix: PlaybackMix | undefined): string {
   if (view.missing) return "missing";
   const volume = view.volume ? `${view.volume.source}:${view.volume.entityId ?? ""}:${view.volume.min}:${view.volume.max}:${view.volume.step}` : "";
@@ -1017,6 +1060,7 @@ function faceSignature(view: RedisplayView, mix: PlaybackMix | undefined): strin
     view.canPower ? "1" : "0",
     view.canGroup ? "1" : "0",
     view.canBrowse ? "1" : "0",
+    view.canAddToLibrary ? "1" : "0",
   ].join("");
   return [view.playerId ?? "", view.favoriteId ?? "", volume, master, view.snoozeId ?? "", view.stopId ?? "", caps].join("|");
 }
@@ -1086,6 +1130,20 @@ export class KioskRedisplay extends HTMLElement {
   private askOpen = false;
   private askToken = 0;
   private askConversationId?: string;
+  private favoriteState: "idle" | "busy" | "error" = "idle";
+  private favoritePop = false;
+  private favoriteResetTimer?: number;
+  private favoriteTrackKey?: string;
+  private trackFavorite?: boolean;
+  private favoriteFetchToken = 0;
+  private libraryState: "idle" | "busy" | "error" = "idle";
+  private libraryPop = false;
+  private libraryResetTimer?: number;
+  private libraryTrackKey?: string;
+  private trackInLibrary?: boolean;
+  private trackUri?: string;
+  private libraryFetchToken = 0;
+  private massQueueConfigEntryId?: string;
   /** Device whose saved tab has already been requested. */
   private tabLoadKey?: string;
   /** The user picked a tab after this card was bound, so a late read must not overwrite it. */
@@ -1156,6 +1214,14 @@ export class KioskRedisplay extends HTMLElement {
     window.removeEventListener("pointercancel", this.endDrag);
     window.removeEventListener("pointerdown", this.onPointerDown);
     window.clearInterval(this.clock);
+    this.clearFavoriteTimer();
+    this.favoriteState = "idle";
+    this.favoritePop = false;
+    this.favoriteFetchToken += 1;
+    this.clearLibraryTimer();
+    this.libraryState = "idle";
+    this.libraryPop = false;
+    this.libraryFetchToken += 1;
     this.dragId = undefined;
   }
 
@@ -1164,6 +1230,19 @@ export class KioskRedisplay extends HTMLElement {
     const deviceChanged = this.boundDevice !== this.deviceId;
     if (deviceChanged) {
       this.boundDevice = this.deviceId;
+      this.clearFavoriteTimer();
+      this.favoriteState = "idle";
+      this.favoritePop = false;
+      this.favoriteTrackKey = undefined;
+      this.trackFavorite = undefined;
+      this.favoriteFetchToken += 1;
+      this.clearLibraryTimer();
+      this.libraryState = "idle";
+      this.libraryPop = false;
+      this.libraryTrackKey = undefined;
+      this.trackInLibrary = undefined;
+      this.trackUri = undefined;
+      this.libraryFetchToken += 1;
       this.alarmList = undefined;
       this.alarmsPresence = undefined;
       this.timerList = undefined;
@@ -1194,7 +1273,11 @@ export class KioskRedisplay extends HTMLElement {
     });
     const playerId = this.model.media.playerId;
     this.player = playerSnapshot(playerId ? this._hass.states[playerId] : undefined);
-    const view = buildRedisplay(this.model, this.player, Date.now(), this._hass.locale);
+    const view = buildRedisplay(this.model, this.player, Date.now(), this._hass.locale, {
+      canAddToLibrary:
+        massQueueAvailable(this._hass) &&
+        (this.player.appId === "music_assistant" || Boolean(this.model.media.favoriteId)),
+    });
     this.view = view;
     this.mix = playbackMix(this.model);
     this.ensureShell();
@@ -1586,15 +1669,17 @@ export class KioskRedisplay extends HTMLElement {
         transport.append(stop);
       }
       if (view.favoriteId) {
-        const fav = this.iconButton("Favorite current song", ICONS.heart, () => this.press(this.view?.favoriteId));
+        const fav = this.iconButton("Favorite current song", ICONS.heart, () => this.pressFavorite());
         fav.classList.add("favorite");
         fav.dataset.part = "favorite";
         transport.append(fav);
       }
-      const infoBtn = this.iconButton("More info", ICONS.info, () => this.openMoreInfo());
-      infoBtn.classList.add("player-info");
-      infoBtn.dataset.part = "player-info";
-      transport.append(infoBtn);
+      if (view.canAddToLibrary) {
+        const lib = this.iconButton("Add to library", ICONS.libraryAdd, () => this.pressLibrary());
+        lib.classList.add("library");
+        lib.dataset.part = "library";
+        transport.append(lib);
+      }
     }
 
     const stage = document.createElement("div");
@@ -1727,6 +1812,8 @@ export class KioskRedisplay extends HTMLElement {
     this.hide("banner", !view.ringing);
     this.paintProgress(view);
     this.paintPlay(view);
+    this.paintFavorite(view);
+    this.paintLibrary(view);
     this.paintVolume(view);
     this.paintMediaMute(view);
     this.paintMix();
@@ -1838,6 +1925,282 @@ export class KioskRedisplay extends HTMLElement {
   private press(entityId: string | undefined): void {
     if (!entityId) return;
     this.call("button", "press", undefined, { entity_id: entityId });
+  }
+
+  private clearFavoriteTimer(): void {
+    if (this.favoriteResetTimer !== undefined) {
+      window.clearTimeout(this.favoriteResetTimer);
+      this.favoriteResetTimer = undefined;
+    }
+  }
+
+  private paintFavorite(view?: RedisplayView): void {
+    if (view) {
+      const hasTrack = Boolean(view.playerId && view.favoriteId && !view.playerOff && (view.playing || this.player?.state === "paused" || this.player?.contentId));
+      const trackKey = hasTrack
+        ? `${view.playerId ?? ""}|${this.player?.contentId ?? ""}|${view.title}|${view.artist}`
+        : "";
+      if (this.favoriteTrackKey !== trackKey) {
+        this.favoriteTrackKey = trackKey;
+        this.trackFavorite = undefined;
+        this.favoritePop = false;
+        this.clearFavoriteTimer();
+        if (this.favoriteState !== "busy") this.favoriteState = "idle";
+        if (hasTrack && view.playerId) {
+          this.fetchTrackFavorite(view.playerId, trackKey);
+        }
+      }
+    }
+    const btn = this.piece("favorite");
+    if (!(btn instanceof HTMLButtonElement)) return;
+    const isFavorited = this.favoriteState !== "error" && this.trackFavorite === true;
+    btn.classList.toggle("is-busy", this.favoriteState === "busy");
+    btn.classList.toggle("is-favorited", isFavorited);
+    btn.classList.toggle("is-pop", this.favoritePop);
+    btn.classList.toggle("is-error", this.favoriteState === "error");
+    btn.setAttribute("aria-pressed", isFavorited ? "true" : "false");
+    btn.disabled = this.favoriteState === "busy";
+    const label =
+      this.favoriteState === "busy"
+        ? "Favoriting..."
+        : this.favoriteState === "error"
+          ? "Favorite failed"
+          : isFavorited
+            ? "Favorited"
+            : "Favorite current song";
+    btn.setAttribute("aria-label", label);
+    btn.title = label;
+  }
+
+  private fetchTrackFavorite(playerId: string, trackKey: string): void {
+    const hass = this._hass;
+    if (!hass?.services?.music_assistant?.get_queue) return;
+    const token = ++this.favoriteFetchToken;
+    const bound = this.boundDevice;
+    Promise.resolve(hass.callService("music_assistant", "get_queue", {}, { entity_id: playerId }, false, true))
+      .then((result) => {
+        if (!this.isConnected || this.boundDevice !== bound || this.favoriteFetchToken !== token) return;
+        if (this.favoriteTrackKey !== trackKey) return;
+        const favorite = extractQueueFavorite(result, playerId);
+        if (favorite !== undefined) {
+          this.trackFavorite = favorite;
+          this.paintFavorite();
+        }
+      })
+      .catch(() => undefined);
+  }
+
+  private pressFavorite(): void {
+    if (this.favoriteState === "busy") return;
+    const entityId = this.view?.favoriteId;
+    const playerId = this.view?.playerId;
+    const hass = this._hass;
+    if (!entityId || !hass) return;
+    const bound = this.boundDevice;
+    const trackKey = this.favoriteTrackKey ?? "";
+    this.clearFavoriteTimer();
+    this.favoriteState = "busy";
+    this.favoritePop = false;
+    this.paintFavorite();
+    Promise.resolve(hass.callService("button", "press", undefined, { entity_id: entityId }, true))
+      .then(() => {
+        if (!this.isConnected || this.boundDevice !== bound) return;
+        this.favoriteState = "idle";
+        if (this.favoriteTrackKey === trackKey) {
+          this.trackFavorite = true;
+          this.favoritePop = true;
+          this.favoriteResetTimer = window.setTimeout(() => {
+            this.favoriteResetTimer = undefined;
+            this.favoritePop = false;
+            this.paintFavorite();
+          }, 400);
+        }
+        this.paintFavorite();
+        if (playerId && trackKey) this.fetchTrackFavorite(playerId, trackKey);
+      })
+      .catch(() => {
+        if (!this.isConnected || this.boundDevice !== bound) return;
+        this.favoriteState = "error";
+        this.favoritePop = false;
+        this.paintFavorite();
+        this.favoriteResetTimer = window.setTimeout(() => {
+          this.favoriteResetTimer = undefined;
+          this.favoriteState = "idle";
+          this.paintFavorite();
+        }, 1800);
+      });
+  }
+
+  private clearLibraryTimer(): void {
+    if (this.libraryResetTimer !== undefined) {
+      window.clearTimeout(this.libraryResetTimer);
+      this.libraryResetTimer = undefined;
+    }
+  }
+
+  private paintLibrary(view?: RedisplayView): void {
+    if (view) {
+      const hasTrack = Boolean(
+        view.playerId &&
+          view.canAddToLibrary &&
+          !view.playerOff &&
+          (view.playing || this.player?.state === "paused" || this.player?.contentId),
+      );
+      const trackKey = hasTrack
+        ? `${view.playerId ?? ""}|${this.player?.contentId ?? ""}|${view.title}|${view.artist}`
+        : "";
+      if (this.libraryTrackKey !== trackKey) {
+        this.libraryTrackKey = trackKey;
+        this.trackInLibrary = this.player?.contentId?.startsWith("library://") ? true : undefined;
+        this.trackUri = this.player?.contentId;
+        this.libraryPop = false;
+        this.clearLibraryTimer();
+        if (this.libraryState !== "busy") this.libraryState = "idle";
+        if (hasTrack && view.playerId) {
+          this.fetchTrackLibrary(view.playerId, trackKey);
+        }
+      }
+    }
+    const btn = this.piece("library");
+    if (!(btn instanceof HTMLButtonElement)) return;
+    const isInLibrary = this.libraryState !== "error" && this.trackInLibrary === true;
+    btn.classList.toggle("is-busy", this.libraryState === "busy");
+    btn.classList.toggle("is-in-library", isInLibrary);
+    btn.classList.toggle("is-pop", this.libraryPop);
+    btn.classList.toggle("is-error", this.libraryState === "error");
+    btn.setAttribute("aria-pressed", isInLibrary ? "true" : "false");
+    btn.disabled = this.libraryState === "busy";
+    btn.replaceChildren(icon(isInLibrary ? ICONS.libraryIn : ICONS.libraryAdd));
+    const label =
+      this.libraryState === "busy"
+        ? "Adding to library..."
+        : this.libraryState === "error"
+          ? "Add to library failed"
+          : isInLibrary
+            ? "In library"
+            : "Add to library";
+    btn.setAttribute("aria-label", label);
+    btn.title = label;
+  }
+
+  private async resolveMassQueueConfigEntryId(): Promise<string | undefined> {
+    if (this.massQueueConfigEntryId) return this.massQueueConfigEntryId;
+    const callWS = this._hass?.callWS;
+    if (typeof callWS !== "function") return undefined;
+    try {
+      const entries = (await Promise.resolve(
+        callWS({ type: "config_entries/get", domain: "mass_queue" }),
+      )) as Array<{ entry_id?: string; state?: string }> | undefined;
+      if (!Array.isArray(entries) || entries.length === 0) return undefined;
+      const loaded = entries.find((entry) => entry?.state === "loaded" && typeof entry.entry_id === "string");
+      const entryId = loaded?.entry_id ?? entries.find((entry) => typeof entry?.entry_id === "string")?.entry_id;
+      if (entryId) this.massQueueConfigEntryId = entryId;
+      return entryId;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private fetchTrackLibrary(playerId: string, trackKey: string): void {
+    const hass = this._hass;
+    if (!hass?.services?.music_assistant?.get_queue || !hass?.services?.mass_queue?.send_command) return;
+    const token = ++this.libraryFetchToken;
+    const bound = this.boundDevice;
+    Promise.resolve(hass.callService("music_assistant", "get_queue", {}, { entity_id: playerId }, false, true))
+      .then(async (queueResult) => {
+        if (!this.isConnected || this.boundDevice !== bound || this.libraryFetchToken !== token) return;
+        if (this.libraryTrackKey !== trackKey) return;
+        const uri = extractQueueTrackUri(queueResult, playerId) ?? this.player?.contentId;
+        if (!uri) return;
+        this.trackUri = uri;
+        if (uri.startsWith("library://")) {
+          this.trackInLibrary = true;
+          this.paintLibrary();
+          return;
+        }
+        const configEntryId = await this.resolveMassQueueConfigEntryId();
+        if (!configEntryId || !this.isConnected || this.boundDevice !== bound || this.libraryFetchToken !== token) return;
+        if (this.libraryTrackKey !== trackKey) return;
+        const itemResult = await Promise.resolve(
+          hass.callService(
+            "mass_queue",
+            "send_command",
+            {
+              config_entry_id: configEntryId,
+              command: "music/item_by_uri",
+              data: { uri },
+            },
+            undefined,
+            false,
+            true,
+          ),
+        );
+        if (!this.isConnected || this.boundDevice !== bound || this.libraryFetchToken !== token) return;
+        if (this.libraryTrackKey !== trackKey) return;
+        const inLibrary = extractItemInLibrary(itemResult);
+        if (inLibrary !== undefined) {
+          this.trackInLibrary = inLibrary;
+          this.paintLibrary();
+        }
+      })
+      .catch(() => undefined);
+  }
+
+  private pressLibrary(): void {
+    if (this.libraryState === "busy" || this.trackInLibrary === true) return;
+    const playerId = this.view?.playerId;
+    const hass = this._hass;
+    const uri = this.trackUri ?? this.player?.contentId;
+    if (!hass || !uri) return;
+    const bound = this.boundDevice;
+    const trackKey = this.libraryTrackKey ?? "";
+    this.clearLibraryTimer();
+    this.libraryState = "busy";
+    this.libraryPop = false;
+    this.paintLibrary();
+    this.resolveMassQueueConfigEntryId()
+      .then((configEntryId) => {
+        if (!configEntryId) throw new Error("mass_queue config entry not found");
+        return Promise.resolve(
+          hass.callService(
+            "mass_queue",
+            "send_command",
+            {
+              config_entry_id: configEntryId,
+              command: "music/library/add_item",
+              data: { item: uri },
+            },
+            undefined,
+            true,
+          ),
+        );
+      })
+      .then(() => {
+        if (!this.isConnected || this.boundDevice !== bound) return;
+        this.libraryState = "idle";
+        if (this.libraryTrackKey === trackKey) {
+          this.trackInLibrary = true;
+          this.libraryPop = true;
+          this.libraryResetTimer = window.setTimeout(() => {
+            this.libraryResetTimer = undefined;
+            this.libraryPop = false;
+            this.paintLibrary();
+          }, 400);
+        }
+        this.paintLibrary();
+        if (playerId && trackKey) this.fetchTrackLibrary(playerId, trackKey);
+      })
+      .catch(() => {
+        if (!this.isConnected || this.boundDevice !== bound) return;
+        this.libraryState = "error";
+        this.libraryPop = false;
+        this.paintLibrary();
+        this.libraryResetTimer = window.setTimeout(() => {
+          this.libraryResetTimer = undefined;
+          this.libraryState = "idle";
+          this.paintLibrary();
+        }, 1800);
+      });
   }
 
   private wireSeekTrack(track: HTMLElement, fill: HTMLElement): void {
