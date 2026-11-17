@@ -2,13 +2,18 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { EntityState, SatelliteModel, VolumeControl } from "../src/model";
 import {
+  buildGroupCandidates,
   buildRedisplay,
+  computeJoinGroupMembers,
   formatClock,
   formatElapsed,
   formatVolumeReadout,
+  MEDIA_FEATURE,
+  nextRepeatMode,
   playbackMix,
   playerSnapshot,
   redisplayTab,
+  supportsFeature,
   type PlayerSnapshot,
 } from "../src/redisplay";
 
@@ -255,5 +260,104 @@ describe("formatVolumeReadout", () => {
   it("prints a percent at a 0–100 slider and the number otherwise", () => {
     assert.equal(formatVolumeReadout(47, 100), "47%");
     assert.equal(formatVolumeReadout(0.5, 1), "0.5");
+  });
+});
+
+describe("media player parity helpers", () => {
+  it("reads capabilities, mute, shuffle, repeat, app_id, and group_members from snapshot", () => {
+    const entity: EntityState = {
+      state: "playing",
+      attributes: {
+        supported_features: 8320575,
+        app_id: "music_assistant",
+        source: "Music Assistant Queue",
+        is_volume_muted: true,
+        shuffle: true,
+        repeat: "all",
+        group_members: ["media_player.updoot", "media_player.updoot2"],
+      },
+    };
+    const snap = playerSnapshot(entity);
+    assert.equal(snap.supportedFeatures, 8320575);
+    assert.equal(snap.appId, "music_assistant");
+    assert.equal(snap.source, "Music Assistant Queue");
+    assert.equal(snap.muted, true);
+    assert.equal(snap.shuffle, true);
+    assert.equal(snap.repeat, "all");
+    assert.deepEqual(snap.groupMembers, ["media_player.updoot", "media_player.updoot2"]);
+  });
+
+  it("gates capabilities on buildRedisplay using supported_features", () => {
+    const features =
+      MEDIA_FEATURE.SEEK |
+      MEDIA_FEATURE.VOLUME_MUTE |
+      MEDIA_FEATURE.SHUFFLE_SET |
+      MEDIA_FEATURE.REPEAT_SET |
+      MEDIA_FEATURE.STOP |
+      MEDIA_FEATURE.TURN_ON |
+      MEDIA_FEATURE.GROUPING |
+      MEDIA_FEATURE.BROWSE_MEDIA;
+    assert.equal(supportsFeature(features, MEDIA_FEATURE.SEEK), true);
+    assert.equal(supportsFeature(features, MEDIA_FEATURE.TURN_OFF), false);
+
+    const view = buildRedisplay(
+      satellite({ media: { playerId: "media_player.updoot2" } }),
+      { state: "off", supportedFeatures: features, duration: 180, position: 30, repeat: "one", shuffle: true, muted: true },
+      Date.now(),
+    );
+    assert.equal(view.playerOff, true);
+    assert.equal(view.canSeek, true);
+    assert.equal(view.canMute, true);
+    assert.equal(view.canShuffle, true);
+    assert.equal(view.canRepeat, true);
+    assert.equal(view.canStop, true);
+    assert.equal(view.canPower, true);
+    assert.equal(view.canGroup, true);
+    assert.equal(view.canBrowse, true);
+    assert.equal(view.repeat, "one");
+    assert.equal(view.shuffle, true);
+    assert.equal(view.muted, true);
+    assert.equal(view.durationSeconds, 180);
+  });
+
+  it("cycles repeat mode off -> all -> one -> off", () => {
+    assert.equal(nextRepeatMode(undefined), "all");
+    assert.equal(nextRepeatMode("off"), "all");
+    assert.equal(nextRepeatMode("all"), "one");
+    assert.equal(nextRepeatMode("one"), "off");
+  });
+
+  it("builds joinable speaker candidates and computes group_members", () => {
+    const states: Record<string, EntityState> = {
+      "media_player.updoot2": {
+        state: "playing",
+        attributes: { friendly_name: "Updoot2", supported_features: MEDIA_FEATURE.GROUPING, mass_player_type: "player" },
+      },
+      "media_player.updoot": {
+        state: "idle",
+        attributes: { friendly_name: "Updoot", supported_features: MEDIA_FEATURE.GROUPING, mass_player_type: "player" },
+      },
+      "media_player.living_room": {
+        state: "idle",
+        attributes: { friendly_name: "Living Room", supported_features: MEDIA_FEATURE.GROUPING, mass_player_type: "player" },
+      },
+      "media_player.unavailable_sp": {
+        state: "unavailable",
+        attributes: { friendly_name: "Offline", supported_features: MEDIA_FEATURE.GROUPING, mass_player_type: "player" },
+      },
+      "media_player.apple_tv": {
+        state: "idle",
+        attributes: { friendly_name: "Apple TV", supported_features: MEDIA_FEATURE.GROUPING },
+      },
+    };
+    const candidates = buildGroupCandidates("media_player.updoot2", ["media_player.updoot"], states);
+    assert.deepEqual(candidates, [
+      { entityId: "media_player.living_room", name: "Living Room", joined: false },
+      { entityId: "media_player.updoot", name: "Updoot", joined: true },
+    ]);
+    assert.deepEqual(
+      computeJoinGroupMembers("media_player.updoot2", ["media_player.updoot2", "media_player.updoot"], "media_player.living_room"),
+      ["media_player.updoot", "media_player.living_room"],
+    );
   });
 });

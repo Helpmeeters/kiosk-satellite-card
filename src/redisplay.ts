@@ -5,6 +5,27 @@ export interface TimeLocale {
   time_format?: string;
 }
 
+export type RepeatMode = "off" | "all" | "one";
+
+export const MEDIA_FEATURE = {
+  PAUSE: 1,
+  SEEK: 2,
+  VOLUME_SET: 4,
+  VOLUME_MUTE: 8,
+  PREVIOUS_TRACK: 16,
+  NEXT_TRACK: 32,
+  TURN_ON: 128,
+  TURN_OFF: 256,
+  PLAY_MEDIA: 512,
+  VOLUME_STEP: 1024,
+  STOP: 16384,
+  PLAY: 131072,
+  SHUFFLE_SET: 262144,
+  GROUPING: 524288,
+  BROWSE_MEDIA: 1048576,
+  REPEAT_SET: 2097152,
+} as const;
+
 export interface PlayerSnapshot {
   state?: string;
   title?: string;
@@ -15,6 +36,13 @@ export interface PlayerSnapshot {
   duration?: number;
   positionUpdatedAt?: string;
   volumeLevel?: number;
+  supportedFeatures?: number;
+  appId?: string;
+  source?: string;
+  muted?: boolean;
+  shuffle?: boolean;
+  repeat?: RepeatMode;
+  groupMembers?: string[];
 }
 
 export interface RedisplayVolume {
@@ -33,14 +61,29 @@ export interface RedisplayView {
   playerId?: string;
   favoriteId?: string;
   playing: boolean;
+  playerOff: boolean;
   title: string;
   artist: string;
   album: string;
   picture?: string;
   elapsed?: string;
   duration?: string;
+  durationSeconds?: number;
   progress?: number;
   volume?: RedisplayVolume;
+  canSeek: boolean;
+  canMute: boolean;
+  canShuffle: boolean;
+  canRepeat: boolean;
+  canStop: boolean;
+  canPower: boolean;
+  canGroup: boolean;
+  canBrowse: boolean;
+  muted: boolean;
+  shuffle: boolean;
+  repeat: RepeatMode;
+  groupMembers: string[];
+  appId?: string;
   assist?: string;
   nextAlarm?: string;
   snoozedUntil?: string;
@@ -48,6 +91,12 @@ export interface RedisplayView {
   snoozeId?: string;
   stopId?: string;
   timer?: string;
+}
+
+export interface GroupMemberCandidate {
+  entityId: string;
+  name: string;
+  joined: boolean;
 }
 
 /** Master volume, the header speaker. Media volume stays on Now playing. */
@@ -75,6 +124,13 @@ export function playerSnapshot(entity: EntityState | undefined): PlayerSnapshot 
   const position = finiteAttr(attributes, "media_position");
   const duration = finiteAttr(attributes, "media_duration");
   const volume = finiteAttr(attributes, "volume_level");
+  const supportedFeatures = finiteAttr(attributes, "supported_features");
+  const appId = textAttr(attributes, "app_id");
+  const source = textAttr(attributes, "source");
+  const muted = boolAttr(attributes, "is_volume_muted");
+  const shuffle = boolAttr(attributes, "shuffle");
+  const repeat = repeatAttr(attributes);
+  const groupMembers = stringArrayAttr(attributes, "group_members");
   if (title) snapshot.title = title;
   if (artist) snapshot.artist = artist;
   if (album) snapshot.album = album;
@@ -83,6 +139,13 @@ export function playerSnapshot(entity: EntityState | undefined): PlayerSnapshot 
   if (position !== undefined) snapshot.position = position;
   if (duration !== undefined) snapshot.duration = duration;
   if (volume !== undefined) snapshot.volumeLevel = volume;
+  if (supportedFeatures !== undefined) snapshot.supportedFeatures = supportedFeatures;
+  if (appId) snapshot.appId = appId;
+  if (source) snapshot.source = source;
+  if (muted !== undefined) snapshot.muted = muted;
+  if (shuffle !== undefined) snapshot.shuffle = shuffle;
+  if (repeat) snapshot.repeat = repeat;
+  if (groupMembers) snapshot.groupMembers = groupMembers;
   return snapshot;
 }
 
@@ -97,36 +160,69 @@ export function buildRedisplay(
       missing: true,
       name: model.name,
       playing: false,
+      playerOff: false,
       title: "",
       artist: "",
       album: "",
+      canSeek: false,
+      canMute: false,
+      canShuffle: false,
+      canRepeat: false,
+      canStop: false,
+      canPower: false,
+      canGroup: false,
+      canBrowse: false,
+      muted: false,
+      shuffle: false,
+      repeat: "off",
+      groupMembers: [],
       ringing: false,
     };
   }
 
   const state = player?.state ?? model.media.state;
   const playing = state === "playing" || state === "buffering";
+  const playerOff = state === "off" || state === "standby";
   const title = player?.title || model.media.title || (playing ? "Playing" : "Nothing playing");
   const artist = player?.artist || model.media.artist || "";
   const picture = player?.picture || model.media.picture;
   const progress = trackProgress(player, playing, now);
+  const features = player?.supportedFeatures ?? 0;
+  const hasPlayer = Boolean(model.media.playerId);
   const view: RedisplayView = {
     missing: false,
     name: model.name,
     playing,
+    playerOff,
     title,
     artist,
     album: player?.album ?? "",
+    canSeek: hasPlayer && supportsFeature(features, MEDIA_FEATURE.SEEK),
+    canMute: hasPlayer && supportsFeature(features, MEDIA_FEATURE.VOLUME_MUTE),
+    canShuffle: hasPlayer && supportsFeature(features, MEDIA_FEATURE.SHUFFLE_SET),
+    canRepeat: hasPlayer && supportsFeature(features, MEDIA_FEATURE.REPEAT_SET),
+    canStop: hasPlayer && supportsFeature(features, MEDIA_FEATURE.STOP),
+    canPower:
+      hasPlayer && (supportsFeature(features, MEDIA_FEATURE.TURN_ON) || supportsFeature(features, MEDIA_FEATURE.TURN_OFF)),
+    canGroup: hasPlayer && supportsFeature(features, MEDIA_FEATURE.GROUPING),
+    canBrowse:
+      hasPlayer && (supportsFeature(features, MEDIA_FEATURE.BROWSE_MEDIA) || player?.appId === "music_assistant"),
+    muted: player?.muted === true,
+    shuffle: player?.shuffle === true,
+    repeat: player?.repeat ?? "off",
+    groupMembers: player?.groupMembers ? [...player.groupMembers] : [],
     ringing: model.alarms.ringing,
     snoozeId: model.alarms.snoozeId,
     stopId: model.alarms.stopId,
   };
   if (model.media.playerId) view.playerId = model.media.playerId;
   if (model.media.favoriteId) view.favoriteId = model.media.favoriteId;
+  if (player?.appId) view.appId = player.appId;
   if (picture) view.picture = picture;
   if (progress) {
     view.elapsed = formatElapsed(progress.position);
     view.duration = formatElapsed(progress.duration);
+    view.durationSeconds = progress.duration;
     view.progress = progress.ratio;
   }
   const volume = displayVolume(model.volumes, player?.volumeLevel);
@@ -314,4 +410,67 @@ function textAttr(attributes: Record<string, unknown>, key: string): string | un
 function finiteAttr(attributes: Record<string, unknown>, key: string): number | undefined {
   const value = attributes[key];
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function boolAttr(attributes: Record<string, unknown>, key: string): boolean | undefined {
+  const value = attributes[key];
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function repeatAttr(attributes: Record<string, unknown>): RepeatMode | undefined {
+  const value = attributes.repeat;
+  if (value === "off" || value === "all" || value === "one") return value;
+  return undefined;
+}
+
+function stringArrayAttr(attributes: Record<string, unknown>, key: string): string[] | undefined {
+  const value = attributes[key];
+  if (!Array.isArray(value)) return undefined;
+  return value.filter((item): item is string => typeof item === "string" && item.length > 0);
+}
+
+export function supportsFeature(features: number | undefined, flag: number): boolean {
+  if (typeof features !== "number" || !Number.isFinite(features)) return false;
+  return Math.floor(features / flag) % 2 === 1;
+}
+
+export function nextRepeatMode(current: RepeatMode | undefined): RepeatMode {
+  if (current === "off" || !current) return "all";
+  if (current === "all") return "one";
+  return "off";
+}
+
+export function buildGroupCandidates(
+  playerId: string | undefined,
+  groupMembers: readonly string[],
+  states: Record<string, EntityState | undefined>,
+): GroupMemberCandidate[] {
+  if (!playerId) return [];
+  const current = states[playerId];
+  const currentMassType = current?.attributes?.mass_player_type;
+  const joinedSet = new Set(groupMembers);
+  const candidates: GroupMemberCandidate[] = [];
+  for (const [entityId, state] of Object.entries(states)) {
+    if (!entityId.startsWith("media_player.") || entityId === playerId || !state) continue;
+    if (state.state === "unavailable" || state.state === "unknown") continue;
+    const attrs = state.attributes ?? {};
+    const features = typeof attrs.supported_features === "number" ? attrs.supported_features : 0;
+    if (!supportsFeature(features, MEDIA_FEATURE.GROUPING)) continue;
+    if (typeof currentMassType === "string" && currentMassType.length > 0) {
+      if (attrs.mass_player_type !== currentMassType) continue;
+    }
+    const name = textAttr(attrs, "friendly_name") ?? entityId;
+    candidates.push({ entityId, name, joined: joinedSet.has(entityId) });
+  }
+  return candidates.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export function computeJoinGroupMembers(
+  playerId: string,
+  currentMembers: readonly string[],
+  targetId: string,
+): string[] {
+  const set = new Set<string>(currentMembers.filter((id) => id !== playerId));
+  set.add(targetId);
+  return Array.from(set);
 }

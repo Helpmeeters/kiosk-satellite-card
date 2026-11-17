@@ -1,6 +1,6 @@
 {
   "name": "kiosk-satellite-card",
-  "version": "0.1.16",
+  "version": "0.1.17",
   "private": true,
   "type": "module",
   "description": "Helpmeet: Kiosk Satellite Card. The tabbed display for one audio-only Kiosk Satellite.",

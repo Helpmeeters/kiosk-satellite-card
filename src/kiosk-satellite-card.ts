@@ -1,6 +1,6 @@
 import { KioskRedisplay } from "./kiosk-redisplay";
 
-const RELEASE_MARKER = "kiosk-satellite-card@0.1.16";
+const RELEASE_MARKER = "kiosk-satellite-card@0.1.17";
 
 KioskRedisplay.releaseMarker = RELEASE_MARKER;
 

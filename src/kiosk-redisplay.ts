@@ -10,6 +10,7 @@ import {
 import { buildModel, parseConfig, type DeviceEntry, type EntityState, type RegistryEntry, type SatelliteModel } from "./model";
 import {
   buildRedisplay,
+  formatElapsed,
   formatVolumeReadout,
   playbackMix,
   playerSnapshot,
@@ -125,21 +126,9 @@ ha-card {
   background: var(--ha-card-background, var(--card-background-color));
   color: var(--primary-text-color);
 }
-.wash {
-  position: absolute;
-  inset: -48px;
-  width: calc(100% + 96px);
-  height: calc(100% + 96px);
-  object-fit: cover;
-  filter: blur(40px);
-  opacity: 0.4;
-  pointer-events: none;
-}
+.wash,
 .scrim {
-  position: absolute;
-  inset: 0;
-  background: color-mix(in srgb, var(--ha-card-background, var(--card-background-color)) 76%, transparent);
-  pointer-events: none;
+  display: none;
 }
 .face > :not(.wash):not(.scrim) {
   position: relative;
@@ -152,6 +141,7 @@ ha-card {
   flex-direction: column;
   gap: 10px;
   padding: 0;
+  background: transparent;
 }
 .status {
   display: flex;
@@ -207,6 +197,8 @@ ha-card {
   grid-template-columns: 112px minmax(0, 1fr);
   column-gap: 14px;
   align-items: start;
+  min-width: 0;
+  width: 100%;
 }
 .stage > .art,
 .stage > .placeholder {
@@ -237,9 +229,11 @@ ha-card {
 }
 .progress {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 8px;
   align-items: center;
+  width: 100%;
+  min-width: 0;
   color: var(--secondary-text-color);
   font-size: 0.85rem;
   font-variant-numeric: tabular-nums;
@@ -259,19 +253,77 @@ ha-card {
   display: flex;
   justify-content: flex-start;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
+  flex-wrap: nowrap;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
   margin-top: 8px;
 }
 .transport button.icon {
   width: 40px;
-  height: 40px;
+  height: auto;
+  aspect-ratio: 1;
+  flex: 0 1 40px;
+  min-width: 28px;
 }
 .transport button.icon.primary {
   width: 48px;
-  height: 48px;
+  height: auto;
+  aspect-ratio: 1;
+  flex: 0 1 48px;
+  min-width: 34px;
+}
+.transport button.icon span {
+  width: 100%;
+  height: 100%;
+  place-items: center;
 }
 .transport button.icon svg {
+  width: 50%;
+  height: 50%;
+}
+.transport button.icon.favorite,
+.transport button.icon.player-info {
+  width: 34px;
+  height: auto;
+  aspect-ratio: 1;
+  flex: 0 1 34px;
+  min-width: 24px;
+}
+.transport button.icon.favorite svg,
+.transport button.icon.player-info svg {
+  width: 50%;
+  height: 50%;
+}
+.stage .art.is-clickable,
+.stage .placeholder.is-clickable,
+.stage .title.is-clickable {
+  cursor: pointer;
+}
+.progress.is-seekable .track {
+  position: relative;
+  height: 6px;
+  cursor: pointer;
+  touch-action: none;
+}
+.volume .speaker-btn {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--secondary-text-color);
+}
+.volume .speaker-btn:hover {
+  background: color-mix(in srgb, var(--primary-text-color) 8%, transparent);
+  color: var(--primary-text-color);
+}
+.volume .speaker-btn.is-muted {
+  color: var(--error-color, #ba1a1a);
+}
+.volume .speaker-btn svg {
   width: 20px;
   height: 20px;
 }
@@ -919,6 +971,9 @@ const ICONS = {
   info: "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z",
   alert: "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z",
   chat: "M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z",
+  mute: "M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51A8.796 8.796 0 0 0 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3 3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06a8.99 8.99 0 0 0 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4 9.91 6.09 12 8.18V4z",
+  stop: "M6 6h12v12H6z",
+  heart: "M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z",
 };
 
 const TABS = [
@@ -953,7 +1008,17 @@ function faceSignature(view: RedisplayView, mix: PlaybackMix | undefined): strin
   if (view.missing) return "missing";
   const volume = view.volume ? `${view.volume.source}:${view.volume.entityId ?? ""}:${view.volume.min}:${view.volume.max}:${view.volume.step}` : "";
   const master = mix ? `${mix.volume.entityId ?? ""}:${mix.volume.min}:${mix.volume.max}:${mix.volume.step}` : "";
-  return [view.playerId ?? "", view.favoriteId ?? "", volume, master, view.snoozeId ?? "", view.stopId ?? ""].join("|");
+  const caps = [
+    view.canSeek ? "1" : "0",
+    view.canMute ? "1" : "0",
+    view.canShuffle ? "1" : "0",
+    view.canRepeat ? "1" : "0",
+    view.canStop ? "1" : "0",
+    view.canPower ? "1" : "0",
+    view.canGroup ? "1" : "0",
+    view.canBrowse ? "1" : "0",
+  ].join("");
+  return [view.playerId ?? "", view.favoriteId ?? "", volume, master, view.snoozeId ?? "", view.stopId ?? "", caps].join("|");
 }
 
 function batteryIcon(): SVGSVGElement {
@@ -1451,20 +1516,10 @@ export class KioskRedisplay extends HTMLElement {
     const status = document.createElement("div");
     status.className = "status";
     status.dataset.part = "status";
-    const identity = document.createElement("div");
     const assist = document.createElement("p");
     assist.className = "assist";
     assist.dataset.part = "assist";
-    identity.append(assist);
-    const clocks = document.createElement("div");
-    const alarm = document.createElement("p");
-    alarm.className = "alarm";
-    alarm.dataset.part = "alarm";
-    const snoozed = document.createElement("p");
-    snoozed.className = "snoozed";
-    snoozed.dataset.part = "snoozed";
-    clocks.append(alarm, snoozed);
-    status.append(identity, clocks);
+    status.append(assist);
 
     const banner = document.createElement("div");
     banner.className = "banner";
@@ -1478,15 +1533,21 @@ export class KioskRedisplay extends HTMLElement {
     banner.append(ringing, actions);
 
     const art = document.createElement("img");
-    art.className = "art";
+    art.className = view.playerId ? "art is-clickable" : "art";
     art.dataset.part = "art";
     const placeholder = document.createElement("div");
-    placeholder.className = "placeholder";
+    placeholder.className = view.playerId ? "placeholder is-clickable" : "placeholder";
     placeholder.dataset.part = "placeholder";
 
     const title = document.createElement("h3");
-    title.className = "title";
+    title.className = view.playerId ? "title is-clickable" : "title";
     title.dataset.part = "title";
+    if (view.playerId) {
+      const open = () => this.openMoreInfo();
+      art.addEventListener("click", open);
+      placeholder.addEventListener("click", open);
+      title.addEventListener("click", open);
+    }
     const artist = document.createElement("p");
     artist.className = "artist";
     artist.dataset.part = "artist";
@@ -1495,16 +1556,18 @@ export class KioskRedisplay extends HTMLElement {
     album.dataset.part = "album";
 
     const progress = document.createElement("div");
-    progress.className = "progress";
+    progress.className = view.canSeek ? "progress is-seekable" : "progress";
     progress.dataset.part = "progress";
     const elapsed = document.createElement("span");
     elapsed.dataset.part = "elapsed";
     const track = document.createElement("div");
     track.className = "track";
+    track.dataset.part = "seek-track";
     const fill = document.createElement("div");
     fill.className = "fill";
     fill.dataset.part = "fill";
     track.append(fill);
+    if (view.canSeek) this.wireSeekTrack(track, fill);
     const duration = document.createElement("span");
     duration.dataset.part = "duration";
     progress.append(elapsed, track, duration);
@@ -1517,14 +1580,28 @@ export class KioskRedisplay extends HTMLElement {
         this.playButton(),
         this.iconButton("Next", ICONS.next, () => this.transport("media_next_track")),
       );
-      if (view.favoriteId) transport.append(this.textButton("Favorite", () => this.press(this.view?.favoriteId)));
+      if (view.canStop) {
+        const stop = this.iconButton("Stop", ICONS.stop, () => this.transport("media_stop"));
+        stop.dataset.part = "player-stop";
+        transport.append(stop);
+      }
+      if (view.favoriteId) {
+        const fav = this.iconButton("Favorite current song", ICONS.heart, () => this.press(this.view?.favoriteId));
+        fav.classList.add("favorite");
+        fav.dataset.part = "favorite";
+        transport.append(fav);
+      }
+      const infoBtn = this.iconButton("More info", ICONS.info, () => this.openMoreInfo());
+      infoBtn.classList.add("player-info");
+      infoBtn.dataset.part = "player-info";
+      transport.append(infoBtn);
     }
 
     const stage = document.createElement("div");
     stage.className = "stage";
     stage.append(art, placeholder, title, artist, album, progress, transport);
     wrap.append(wash, scrim);
-    if (view.volume) wrap.append(this.mediaVolume(view.volume));
+    if (view.volume) wrap.append(this.mediaVolume(view.volume, view.canMute));
     wrap.append(status, banner, stage);
     return wrap;
   }
@@ -1535,6 +1612,7 @@ export class KioskRedisplay extends HTMLElement {
     button.className = "icon primary";
     button.dataset.part = "play";
     button.setAttribute("aria-label", "Play");
+    button.title = "Play";
     const play = document.createElement("span");
     play.dataset.part = "play-icon";
     play.append(icon(ICONS.play));
@@ -1554,6 +1632,7 @@ export class KioskRedisplay extends HTMLElement {
     button.type = "button";
     button.className = "icon";
     button.setAttribute("aria-label", label);
+    button.title = label;
     button.append(icon(path));
     button.addEventListener("click", onClick);
     return button;
@@ -1568,8 +1647,15 @@ export class KioskRedisplay extends HTMLElement {
     return button;
   }
 
-  private mediaVolume(volume: NonNullable<RedisplayView["volume"]>): HTMLElement {
-    return this.rangeRow("Media volume", "volume", "volume-readout", volume, (value) => this.commitVolume(value));
+  private mediaVolume(volume: NonNullable<RedisplayView["volume"]>, canMute = false): HTMLElement {
+    return this.rangeRow(
+      "Media volume",
+      "volume",
+      "volume-readout",
+      volume,
+      (value) => this.commitVolume(value),
+      canMute,
+    );
   }
 
   private rangeRow(
@@ -1578,13 +1664,29 @@ export class KioskRedisplay extends HTMLElement {
     readoutPart: string,
     volume: { min: number; max: number; step: number; value: number | null },
     commit: (value: number) => void,
+    canMute = false,
   ): HTMLElement {
     const row = document.createElement("div");
     row.className = "volume";
-    const label = document.createElement("span");
-    label.className = "speaker";
-    label.setAttribute("aria-hidden", "true");
-    label.append(icon(ICONS.speaker));
+    let label: HTMLElement;
+    if (canMute) {
+      const muteBtn = document.createElement("button");
+      muteBtn.type = "button";
+      muteBtn.className = "speaker-btn";
+      muteBtn.dataset.part = "media-mute";
+      muteBtn.setAttribute("aria-label", "Mute");
+      muteBtn.title = "Mute";
+      muteBtn.setAttribute("aria-pressed", "false");
+      muteBtn.append(icon(ICONS.speaker));
+      muteBtn.addEventListener("click", () => this.toggleMediaMute());
+      label = muteBtn;
+    } else {
+      const span = document.createElement("span");
+      span.className = "speaker";
+      span.setAttribute("aria-hidden", "true");
+      span.append(icon(ICONS.speaker));
+      label = span;
+    }
     const slider = document.createElement("input");
     slider.type = "range";
     slider.dataset.part = part;
@@ -1621,15 +1723,12 @@ export class KioskRedisplay extends HTMLElement {
     this.paintArt(view);
     this.setText("assist", view.assist ?? "");
     this.hide("assist", !view.assist);
-    this.setText("alarm", view.nextAlarm ?? "");
-    this.hide("alarm", !view.nextAlarm);
-    this.setText("snoozed", view.snoozedUntil ? `Snoozed ${view.snoozedUntil}` : "");
-    this.hide("snoozed", !view.snoozedUntil);
-    this.hide("status", !view.assist && !view.nextAlarm && !view.snoozedUntil);
+    this.hide("status", !view.assist);
     this.hide("banner", !view.ringing);
     this.paintProgress(view);
     this.paintPlay(view);
     this.paintVolume(view);
+    this.paintMediaMute(view);
     this.paintMix();
   }
 
@@ -1653,8 +1752,9 @@ export class KioskRedisplay extends HTMLElement {
     const shown = view.progress !== undefined && view.elapsed !== undefined && view.duration !== undefined;
     this.hide("progress", !shown);
     if (!shown || view.progress === undefined) return;
-    this.setText("elapsed", view.elapsed ?? "");
     this.setText("duration", view.duration ?? "");
+    if (this.dragId === "seek") return;
+    this.setText("elapsed", view.elapsed ?? "");
     const fill = this.piece("fill");
     if (fill) fill.style.width = `${view.progress * 100}%`;
   }
@@ -1663,7 +1763,11 @@ export class KioskRedisplay extends HTMLElement {
     const button = this.piece("play");
     const play = this.piece("play-icon");
     const pause = this.piece("pause-icon");
-    if (button) button.setAttribute("aria-label", view.playing ? "Pause" : "Play");
+    const label = view.playing ? "Pause" : "Play";
+    if (button) {
+      button.setAttribute("aria-label", label);
+      button.title = label;
+    }
     if (play) play.hidden = view.playing;
     if (pause) pause.hidden = !view.playing;
   }
@@ -1734,6 +1838,80 @@ export class KioskRedisplay extends HTMLElement {
   private press(entityId: string | undefined): void {
     if (!entityId) return;
     this.call("button", "press", undefined, { entity_id: entityId });
+  }
+
+  private wireSeekTrack(track: HTMLElement, fill: HTMLElement): void {
+    const ratioFromEvent = (event: PointerEvent): number => {
+      const rect = track.getBoundingClientRect();
+      if (rect.width <= 0) return 0;
+      return Math.min(Math.max((event.clientX - rect.left) / rect.width, 0), 1);
+    };
+    const preview = (ratio: number): void => {
+      fill.style.width = `${ratio * 100}%`;
+      const dur = this.view?.durationSeconds;
+      if (dur !== undefined && dur > 0) {
+        this.setText("elapsed", formatElapsed(ratio * dur));
+      }
+    };
+    track.addEventListener("pointerdown", (event) => {
+      if (!this.view?.canSeek || !this.view.durationSeconds) return;
+      this.dragId = "seek";
+      if (typeof track.setPointerCapture === "function") {
+        try {
+          track.setPointerCapture(event.pointerId);
+        } catch {
+          // Ignore capture failures in synthetic environments.
+        }
+      }
+      preview(ratioFromEvent(event));
+    });
+    track.addEventListener("pointermove", (event) => {
+      if (this.dragId !== "seek") return;
+      preview(ratioFromEvent(event));
+    });
+    const commit = (event: PointerEvent) => {
+      if (this.dragId !== "seek") return;
+      this.dragId = undefined;
+      const ratio = ratioFromEvent(event);
+      const dur = this.view?.durationSeconds;
+      const player = this.view?.playerId;
+      if (!player || dur === undefined || dur <= 0) return;
+      preview(ratio);
+      this.call("media_player", "media_seek", { seek_position: Math.round(ratio * dur) }, { entity_id: player });
+    };
+    track.addEventListener("pointerup", commit);
+    track.addEventListener("pointercancel", () => {
+      this.dragId = undefined;
+    });
+  }
+
+  private paintMediaMute(view: RedisplayView): void {
+    const btn = this.piece("media-mute");
+    if (!btn) return;
+    const label = view.muted ? "Unmute" : "Mute";
+    btn.classList.toggle("is-muted", view.muted);
+    btn.setAttribute("aria-pressed", view.muted ? "true" : "false");
+    btn.setAttribute("aria-label", label);
+    btn.title = label;
+    btn.replaceChildren(icon(view.muted ? ICONS.mute : ICONS.speaker));
+  }
+
+  private openMoreInfo(): void {
+    const entityId = this.view?.playerId;
+    if (!entityId) return;
+    this.dispatchEvent(
+      new CustomEvent("hass-more-info", {
+        bubbles: true,
+        composed: true,
+        detail: { entityId },
+      }),
+    );
+  }
+
+  private toggleMediaMute(): void {
+    const player = this.view?.playerId;
+    if (!player) return;
+    this.call("media_player", "volume_mute", { is_volume_muted: !this.view?.muted }, { entity_id: player });
   }
 
   private call(domain: string, service: string, data?: Record<string, unknown>, target?: Record<string, unknown>): void {
