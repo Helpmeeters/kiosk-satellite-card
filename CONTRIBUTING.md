@@ -28,7 +28,7 @@ npm run build
 
 - Keep changes focused. One fix or feature per pull request.
 - Add or update tests for any behavior change, and make sure `npm test` passes.
-- Which entities land in which section, the button row, and alarm script calls are specified in the [README](README.md). Read it before changing how the panel, the button, or entity resolution behaves.
-- Update the README when user-facing behavior changes.
+- Which entities land in which section, the button row, and alarm script calls are specified in the [Technical Reference](docs/technical-reference.md). Read it before changing how the panel, the button, or entity resolution behaves.
+- Update the [README](README.md) or [Technical Reference](docs/technical-reference.md) when user-facing behavior or entity resolution changes.
 
 By contributing, you agree that your contributions are licensed under the [MIT License](LICENSE).

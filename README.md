@@ -1,35 +1,102 @@
 # Helpmeet: Kiosk Satellite Card
 
-A [HACS](https://hacs.xyz/) Lovelace plugin for one Kiosk Satellite. The card is the display for an audio-only satellite: a header of icons, tabs under the title, now playing, alarms and timers, intercom, and the voice agent. It draws that face from the device's Home Assistant entities. The Kiosk Satellite display itself does not run on a device without a screen, and this card does not load it.
+[![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=flat-square)](https://github.com/Helpmeeters/kiosk-satellite-card)
+[![GitHub Release](https://img.shields.io/github/v/release/Helpmeeters/kiosk-satellite-card?style=flat-square)](https://github.com/Helpmeeters/kiosk-satellite-card/releases)
+[![License: MIT](https://img.shields.io/github/license/Helpmeeters/kiosk-satellite-card?style=flat-square)](LICENSE)
 
-The visual editor has one required field, labeled Kiosk satellite. It lists only devices whose manufacturer is `kiosk_satellite` and that have an `assist_satellite` entity. A Music Assistant speaker manufactured "Kiosk Satellite" is not that device.
+A [HACS](https://hacs.xyz/) Lovelace card for managing an audio-only **Kiosk Satellite** in Home Assistant — bringing together media playback, alarms and timers, intercom, and voice assistant controls in one compact, tabbed interface.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Helpmeeters/kiosk-satellite-card/main/docs/images/now-playing.png" alt="Kiosk Satellite Card — Now Playing" width="460" />
+</p>
+
+## Features
+
+- **Now Playing** — Album art, track info, live progress bar, media volume slider, playback controls, and favorite button.
+- **Alarms & Timers** — Side-by-side alarms and timers with inline creation, snooze, stop, and timer mute.
+- **Intercom** — Dedicated intercom volume and one-tap mode switching (**Off**, **Ring**, **Answer**, **DND**).
+- **Voice Agent** — Configure wake words, assistants, sensitivity, finished-speaking detection, chimes, and noise gate.
+- **Compact Mode** — Click the active tab to collapse the card into four interactive mini tiles for glanceable control.
+- **Inline Ask** — Send text queries directly to your satellite's configured voice assistant from the dashboard.
+- **Header Quick Controls** — Master volume popup, mic mute toggle, battery status, firmware update indicator with diagnostics, and device power/admin menu.
+
+## Screenshots
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="https://raw.githubusercontent.com/Helpmeeters/kiosk-satellite-card/main/docs/images/alarms-timers.png" alt="Alarms & Timers tab" /><br />
+      <sub><strong>Alarms &amp; Timers</strong></sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="https://raw.githubusercontent.com/Helpmeeters/kiosk-satellite-card/main/docs/images/intercom.png" alt="Intercom tab" /><br />
+      <sub><strong>Intercom</strong></sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="https://raw.githubusercontent.com/Helpmeeters/kiosk-satellite-card/main/docs/images/voice-agent.png" alt="Voice Agent tab" /><br />
+      <sub><strong>Voice Agent</strong></sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="https://raw.githubusercontent.com/Helpmeeters/kiosk-satellite-card/main/docs/images/compact-view.png" alt="Compact Mode" /><br />
+      <sub><strong>Compact Mode</strong></sub>
+    </td>
+  </tr>
+</table>
+
+## Installation
+
+### HACS (Recommended)
+
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Helpmeeters&repository=kiosk-satellite-card&category=plugin)
+
+Or add it manually in HACS:
+
+1. Open **HACS** in Home Assistant.
+2. Click the three-dot menu in the top right and select **Custom repositories**.
+3. Enter `https://github.com/Helpmeeters/kiosk-satellite-card` and select **Dashboard** (or **Lovelace**) as the category.
+4. Click **Add**, then search for **Helpmeet: Kiosk Satellite Card** and click **Download**.
+5. Refresh your browser when prompted.
+
+### Manual Installation
+
+1. Download `kiosk-satellite-card.js` from the [latest release](https://github.com/Helpmeeters/kiosk-satellite-card/releases/latest).
+2. Copy it to `/config/www/kiosk-satellite-card.js`.
+3. In Home Assistant, go to **Settings → Dashboards → Resources**, click **Add Resource**, and enter:
+   - **URL**: `/local/kiosk-satellite-card.js`
+   - **Resource type**: `JavaScript Module`
+
+## Configuration
+
+### Visual Editor
+
+Add **Kiosk Satellite Card** from the Home Assistant dashboard card picker and select your device in the **Kiosk satellite** dropdown.
+
+### YAML
 
 ```yaml
 type: custom:kiosk-satellite-card
 device: a78b06196d065fff7a9bf5c7331e0e5e
 ```
 
-A dashboard that still says `type: custom:kiosk-redisplay` renders this same card.
+| Option | Type | Required | Description |
+| --- | --- | --- | --- |
+| `type` | `string` | **Yes** | `custom:kiosk-satellite-card` (legacy `custom:kiosk-redisplay` is also supported). |
+| `device` | `string` | **Yes** | Device ID of an audio-only Kiosk Satellite (`kiosk_satellite` manufacturer with an `assist_satellite` entity). |
 
-## What the card shows
+## Requirements
 
-Every entity on the selected ESPHome device, plus the Music Assistant player and favorite button paired from the assist satellite. `assist_satellite.updoot_assist_satellite` pairs with `media_player.updoot` and `button.updoot_favorite_current_song`.
+- A Kiosk Satellite device integrated into Home Assistant (ESPHome audio satellite).
+- To **create alarms** from the card, `script.kiosk_satellite_alarms` must be configured and the kiosk's Home Assistant token must have administrator permissions. (Viewing, snoozing, and stopping alarms work directly from device entities.)
 
-Previous, play, pause, and next call the paired player. Favorite, snooze, and stop press that device's buttons. The Media volume slider writes the device's Media volume. When that entity is absent, the slider writes the player's volume. Progress advances from the player's reported position while it is playing.
+## Technical Reference
 
-Four icon tabs sit directly under the title row: Now playing, Alarms & Timers, Intercom, and Voice Agent. The selected tab stays put while Home Assistant updates, and Home Assistant remembers that tab for the device. A Timers or Alarms selection lands on Alarms & Timers. The title row is the satellite name, then the speaker and its percent, the voice mute mic when the mute switch exists, the battery icon, info, and power.
-
-Now playing puts a speaker icon and the Media volume slider at the top, then the artwork to the left of the title, artist, and transport. The speaker in the title row is master Volume, and a click opens a vertical slider. Alarms & Timers puts alarms and timers in two columns. Alarms stay a list with the next one first. An alarm that is turned off stays in that list and shows Off, including when the next-alarm sensor is unknown. A next-alarm timestamp is included when the script list has no alarm at that time. Snooze and Stop show while one is ringing, and Add asks for time, label, and weekdays when `script.kiosk_satellite_alarms` answers. Add opens a small card in the column for those fields. Timers use that same column: the next timer, the count or "No timers", and Mute timers. Add on the timer column opens a small card for a label and hours, minutes, and seconds, and calls that device's `esphome` `vs_start_timer` service when Home Assistant has it. Intercom puts a speaker icon and the Intercom volume slider at the top when that entity exists, then four buttons: Off, Ring, Answer, and DND. Off turns Intercom enabled off. Ring, Answer, and DND turn it on and set Intercom answer mode to Ring, Answer automatically, or Do not disturb. A button stays disabled when the entity it writes is missing. Voice Agent puts a speaker icon and the Assistant volume slider at the top, then the wake word and assistant selects. Stop word shares a row with Finished speaking detection. Chimes shares a row with Noise gate. The panel says "No voice agent settings" when the device has none of those. The mic in the title row toggles Mute when that switch exists. The power button opens Restart app, Restart device, and Device admin. Restart asks before it runs, and Device admin opens the kiosk's remote admin page. Info opens updates with Install, other device buttons, and collapsed diagnostics, and the icon turns yellow when an update is available. A tab stays even when that device has nothing to show there. Light stays off this card.
-
-Setting an alarm calls `script.kiosk_satellite_alarms` with `kiosk` set to the device name. If the kiosk does not answer, the card shows the script error. Next alarm, snooze, and stop work from the entities even when the script does not answer. The kiosk's Home Assistant token must be an administrator for the script to answer.
-
-## Install
-
-Add `https://github.com/Helpmeeters/kiosk-satellite-card` in HACS as a Lovelace plugin (category `plugin`) and install **Helpmeet: Kiosk Satellite Card**. HACS registers the `kiosk-satellite-card.js` resource. This card does not ship Bubble or Mushroom.
+For entity pairing rules, service calls, and fallback behavior, see the [Technical Reference](docs/technical-reference.md).
 
 ## Contributing
 
-Bug reports and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the development setup and what to include in a bug report, and [SECURITY.md](SECURITY.md) for reporting vulnerabilities privately.
+Bug reports and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the development setup and [SECURITY.md](SECURITY.md) for reporting vulnerabilities privately.
 
 ## Written with AI assistance
 
