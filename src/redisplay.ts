@@ -1,5 +1,10 @@
 import type { EntityState, SatelliteModel, VolumeControl } from "./model";
 
+export interface TimeLocale {
+  language?: string;
+  time_format?: string;
+}
+
 export interface PlayerSnapshot {
   state?: string;
   title?: string;
@@ -81,7 +86,12 @@ export function playerSnapshot(entity: EntityState | undefined): PlayerSnapshot 
   return snapshot;
 }
 
-export function buildRedisplay(model: SatelliteModel, player: PlayerSnapshot | undefined, now: number): RedisplayView {
+export function buildRedisplay(
+  model: SatelliteModel,
+  player: PlayerSnapshot | undefined,
+  now: number,
+  locale?: TimeLocale,
+): RedisplayView {
   if (model.missing) {
     return {
       missing: true,
@@ -123,11 +133,11 @@ export function buildRedisplay(model: SatelliteModel, player: PlayerSnapshot | u
   if (volume) view.volume = volume;
   const assist = model.assistState ? ASSIST_LABELS[model.assistState] : undefined;
   if (assist) view.assist = assist;
-  const nextAlarm = clockText(model.alarms.nextAlarm);
+  const nextAlarm = clockText(model.alarms.nextAlarm, locale);
   if (nextAlarm) view.nextAlarm = nextAlarm;
-  const snoozed = clockText(model.alarms.snoozedUntil);
+  const snoozed = clockText(model.alarms.snoozedUntil, locale);
   if (snoozed) view.snoozedUntil = snoozed;
-  const timer = timerText(model);
+  const timer = timerText(model, locale);
   if (timer) view.timer = timer;
   return view;
 }
@@ -173,9 +183,34 @@ export function formatElapsed(seconds: number): string {
   return `${minutes}:${second}`;
 }
 
-export function formatClock(state: string): string | undefined {
+export function formatDateClock(date: Date, locale?: TimeLocale): string {
+  const format = locale?.time_format;
+  if (format === "12") {
+    return date.toLocaleTimeString(locale?.language || undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    });
+  }
+  if (format === "24") {
+    return date.toLocaleTimeString(locale?.language || undefined, {
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    });
+  }
+  if (format === "language" && locale?.language) {
+    return date.toLocaleTimeString(locale.language, {
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  }
+  return date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}
+
+export function formatClock(state: string, locale?: TimeLocale): string | undefined {
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(state) || Number.isNaN(new Date(state).getTime())) return undefined;
-  return new Date(state).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return formatDateClock(new Date(state), locale);
 }
 
 function trackProgress(
@@ -220,8 +255,8 @@ function displayVolume(volumes: readonly VolumeControl[], playerLevel: number | 
 const SPEAKER_PATH =
   "M3 9v6h4l5 5V4L7 9H3zm13.5 3a5 5 0 0 1-2.5 4.03V7.97A5 5 0 0 1 16.5 12zM14 3.23v2.06A7 7 0 0 1 19 12a7 7 0 0 1-5 6.71v2.06A9 9 0 0 0 21 12a9 9 0 0 0-7-8.77z";
 
-/** Speaker mark for a volume row. A span stands in when the document cannot build SVG. */
-export function speakerMark(className: string): HTMLElement {
+/** Inline 24x24 SVG icon, with a span fallback when document lacks createElementNS. */
+export function svgIcon(pathData: string, className = ""): HTMLElement {
   const creator = document as Document & {
     createElementNS?: (namespace: string, name: string) => Element;
   };
@@ -229,26 +264,31 @@ export function speakerMark(className: string): HTMLElement {
     const svg = creator.createElementNS("http://www.w3.org/2000/svg", "svg");
     svg.setAttribute("viewBox", "0 0 24 24");
     svg.setAttribute("aria-hidden", "true");
-    svg.setAttribute("class", className);
+    if (className) svg.setAttribute("class", className);
     const path = creator.createElementNS("http://www.w3.org/2000/svg", "path");
     path.setAttribute("fill", "currentColor");
-    path.setAttribute("d", SPEAKER_PATH);
+    path.setAttribute("d", pathData);
     svg.append(path);
     return svg as unknown as HTMLElement;
   }
   const span = document.createElement("span");
-  span.className = className;
+  if (className) span.className = className;
   span.setAttribute("aria-hidden", "true");
   return span;
+}
+
+/** Speaker mark for a volume row. A span stands in when the document cannot build SVG. */
+export function speakerMark(className: string): HTMLElement {
+  return svgIcon(SPEAKER_PATH, className);
 }
 
 function normalize(name: string): string {
   return name.trim().toLowerCase();
 }
 
-function clockText(state: string | undefined): string | undefined {
+function clockText(state: string | undefined, locale?: TimeLocale): string | undefined {
   if (!state) return undefined;
-  const clock = formatClock(state);
+  const clock = formatClock(state, locale);
   if (clock) return clock;
   const trimmed = state.trim();
   const lower = trimmed.toLowerCase();
@@ -256,9 +296,9 @@ function clockText(state: string | undefined): string | undefined {
   return trimmed;
 }
 
-function timerText(model: SatelliteModel): string | undefined {
+function timerText(model: SatelliteModel, locale?: TimeLocale): string | undefined {
   const next = model.timers.find((line) => normalize(line.name) === "next timer");
-  const nextText = clockText(next?.state);
+  const nextText = clockText(next?.state, locale);
   if (nextText) return `Timer ${nextText}`;
   const count = model.timers.find((line) => normalize(line.name) === "timers");
   const numeric = Number(count?.state);

@@ -158,6 +158,17 @@ export const intercomCss = `
 }
 `;
 
+const pendingModeFor = new WeakMap<HTMLElement, IntercomModeId>();
+
+interface IntercomBindings {
+  view: IntercomView;
+  onSwitch: IntercomSwitchChange;
+  onVolume?: IntercomVolumeChange;
+  onSelect?: IntercomSelectChange;
+}
+
+const bindingsFor = new WeakMap<HTMLElement, IntercomBindings>();
+
 export function renderIntercom(
   parent: HTMLElement,
   view: IntercomView | undefined,
@@ -166,15 +177,68 @@ export function renderIntercom(
   onSelect?: IntercomSelectChange,
 ): void {
   if (!view || view.buttons.length === 0) {
+    pendingModeFor.delete(parent);
+    bindingsFor.delete(parent);
     parent.replaceChildren();
+    return;
+  }
+  const pending = pendingModeFor.get(parent);
+  if (pending && view.enabledOn !== false && view.answerId) {
+    pendingModeFor.delete(parent);
+    const match = view.buttons.find((item) => item.id === pending);
+    if (match?.option && !match.selected) {
+      onSelect?.("select", "select_option", { option: match.option }, { entity_id: view.answerId });
+    }
+  }
+  bindingsFor.set(parent, { view, onSwitch, onVolume, onSelect });
+  const existing = existingSection(parent);
+  if (existing) {
+    paintIntercom(existing, view);
     return;
   }
   const root = document.createElement("section");
   root.className = "rd-intercom";
   root.setAttribute("aria-label", "Intercom");
-  if (view.volume) root.append(volumeRow(view.volume, onVolume));
-  root.append(modeRow(view, onSwitch, onSelect));
+  root.append(volumeRow(parent, view.volume), modeRow(parent, view));
+  paintIntercom(root, view);
   parent.replaceChildren(root);
+}
+
+function existingSection(parent: HTMLElement): HTMLElement | undefined {
+  for (const child of parent.children) {
+    if (child.className.split(/\s+/).includes("rd-intercom")) return child as HTMLElement;
+  }
+  return undefined;
+}
+
+function paintIntercom(root: HTMLElement, view: IntercomView): void {
+  const slider = root.querySelector(".rd-intercom-slider") as HTMLInputElement | null;
+  const readout = root.querySelector(".rd-intercom-volume-value");
+  if (slider) {
+    const volume = view.volume;
+    if (volume) {
+      slider.disabled = false;
+      slider.min = String(volume.min);
+      slider.max = String(volume.max);
+      slider.step = String(volume.step);
+      slider.value = String(volume.value ?? volume.min);
+      slider.dataset.entity = volume.entityId;
+      if (readout) readout.textContent = volume.value === null ? "" : formatVolumeReadout(volume.value, volume.max);
+    } else {
+      slider.disabled = true;
+      delete slider.dataset.entity;
+      if (readout) readout.textContent = "—";
+    }
+  }
+  const buttons = root.querySelectorAll(".rd-intercom-mode");
+  for (const node of buttons) {
+    const mode = node.getAttribute("data-mode");
+    const item = view.buttons.find((button) => button.id === mode);
+    if (!item) continue;
+    (node as HTMLButtonElement).disabled = item.disabled;
+    node.className = item.selected ? "rd-intercom-mode rd-intercom-mode-on" : "rd-intercom-mode";
+    node.setAttribute("aria-pressed", item.selected ? "true" : "false");
+  }
 }
 
 function buildButtons(enabled: SwitchControl | undefined, answer: SelectControl | undefined): IntercomButtonView[] {
@@ -187,11 +251,12 @@ function buildButtons(enabled: SwitchControl | undefined, answer: SelectControl 
   const modes = MODES.map((mode): IntercomButtonView => {
     const option = matchedOption(answer, mode.match);
     const selected = Boolean(enabled?.on && option && normalize(answer?.value ?? "") === mode.match);
+    const disabled = !enabled || (enabled.on ? !answer || !option : Boolean(answer) && !option);
     return {
       id: mode.id,
       label: mode.label,
       selected,
-      disabled: !enabled || !answer || !option,
+      disabled,
       option,
     };
   });
@@ -217,49 +282,45 @@ function volumeView(volume: VolumeControl): IntercomVolumeView {
   };
 }
 
-function volumeRow(volume: IntercomVolumeView, onVolume: IntercomVolumeChange | undefined): HTMLElement {
+function volumeRow(parent: HTMLElement, volume: IntercomVolumeView | undefined): HTMLElement {
   const row = document.createElement("div");
   row.className = "rd-intercom-volume";
   const slider = document.createElement("input");
   slider.type = "range";
   slider.className = "rd-intercom-slider";
-  slider.min = String(volume.min);
-  slider.max = String(volume.max);
-  slider.step = String(volume.step);
-  slider.value = String(volume.value ?? volume.min);
-  slider.dataset.entity = volume.entityId;
+  slider.min = String(volume?.min ?? 0);
+  slider.max = String(volume?.max ?? 100);
+  slider.step = String(volume?.step ?? 1);
+  slider.value = String(volume?.value ?? volume?.min ?? 0);
+  slider.disabled = !volume;
+  if (volume) slider.dataset.entity = volume.entityId;
   slider.setAttribute("aria-label", "Intercom volume");
   const readout = document.createElement("span");
   readout.className = "rd-intercom-volume-value";
-  readout.textContent = volume.value === null ? "" : formatVolumeReadout(volume.value, volume.max);
+  readout.textContent = volume ? (volume.value === null ? "" : formatVolumeReadout(volume.value, volume.max)) : "—";
   slider.addEventListener("input", () => {
-    readout.textContent = formatVolumeReadout(Number(slider.value), volume.max);
+    const current = bindingsFor.get(parent)?.view.volume;
+    if (!current) return;
+    readout.textContent = formatVolumeReadout(Number(slider.value), current.max);
   });
   slider.addEventListener("change", () => {
-    onVolume?.(volume.entityId, Number(slider.value));
+    const bindings = bindingsFor.get(parent);
+    const current = bindings?.view.volume;
+    if (!bindings || !current) return;
+    bindings.onVolume?.(current.entityId, Number(slider.value));
   });
   row.append(speakerMark("rd-intercom-speaker"), slider, readout);
   return row;
 }
 
-function modeRow(
-  view: IntercomView,
-  onSwitch: IntercomSwitchChange,
-  onSelect: IntercomSelectChange | undefined,
-): HTMLElement {
+function modeRow(parent: HTMLElement, view: IntercomView): HTMLElement {
   const row = document.createElement("div");
   row.className = "rd-intercom-modes";
-  for (const item of view.buttons) row.append(modeButton(row, view, item, onSwitch, onSelect));
+  for (const item of view.buttons) row.append(modeButton(parent, row, item));
   return row;
 }
 
-function modeButton(
-  row: HTMLElement,
-  view: IntercomView,
-  item: IntercomButtonView,
-  onSwitch: IntercomSwitchChange,
-  onSelect: IntercomSelectChange | undefined,
-): HTMLButtonElement {
+function modeButton(parent: HTMLElement, row: HTMLElement, item: IntercomButtonView): HTMLButtonElement {
   const button = document.createElement("button");
   button.type = "button";
   button.className = item.selected ? "rd-intercom-mode rd-intercom-mode-on" : "rd-intercom-mode";
@@ -269,18 +330,29 @@ function modeButton(
   button.setAttribute("aria-pressed", item.selected ? "true" : "false");
   button.addEventListener("click", () => {
     if (button.disabled) return;
-    if (item.id === "off") {
+    const bindings = bindingsFor.get(parent);
+    if (!bindings) return;
+    const { view, onSwitch, onSelect } = bindings;
+    const current = view.buttons.find((entry) => entry.id === item.id);
+    if (!current || current.disabled) return;
+    if (current.id === "off") {
       if (!view.enabledId) return;
+      pendingModeFor.delete(parent);
       paintPressed(row, "off");
       onSwitch("switch", "turn_off", undefined, { entity_id: view.enabledId });
       return;
     }
-    if (!view.answerId || !item.option) return;
-    paintPressed(row, item.id);
+    if (!view.enabledId && (!view.answerId || !current.option)) return;
+    paintPressed(row, current.id);
     if (view.enabledId && view.enabledOn === false) {
       onSwitch("switch", "turn_on", undefined, { entity_id: view.enabledId });
     }
-    onSelect?.("select", "select_option", { option: item.option }, { entity_id: view.answerId });
+    if (view.answerId && current.option) {
+      pendingModeFor.delete(parent);
+      onSelect?.("select", "select_option", { option: current.option }, { entity_id: view.answerId });
+    } else {
+      pendingModeFor.set(parent, current.id);
+    }
   });
   return button;
 }

@@ -6,6 +6,10 @@ import {
   assistStem,
   buildTimers,
   renderTimers,
+  timerCancelService,
+  timerListFromFailure,
+  timerListFromPayload,
+  timerListService,
   timerStartData,
   timerStartService,
   timersCss,
@@ -87,7 +91,8 @@ class DomNode {
   private queryAll(selector: string): DomNode[] {
     const matches: DomNode[] = [];
     const walk = (node: DomNode): void => {
-      if (node.className.split(/\s+/).includes(selector.slice(1))) matches.push(node);
+      const raw = typeof node.className === "string" ? node.className : (node.getAttribute("class") ?? "");
+      if (raw.split(/\s+/).includes(selector.slice(1))) matches.push(node);
       for (const child of node.children) walk(child);
     };
     for (const child of this.children) walk(child);
@@ -227,7 +232,7 @@ describe("buildTimers", () => {
 });
 
 describe("timersCss", () => {
-  it("matches the alarm column: uppercase heading, emphasized next time, and an Add row", () => {
+  it("matches the alarm column: uppercase heading, emphasized next time, and iconic header actions", () => {
     const selectors = timersCss.split("}").map((block) => block.split("{")[0] ?? "");
     const classNames = selectors.flatMap((selector) => [...selector.matchAll(/\.([A-Za-z_][\w-]*)/g)].map((match) => match[1] ?? ""));
     assert.ok(classNames.length > 0);
@@ -235,8 +240,8 @@ describe("timersCss", () => {
     assert.match(timersCss, /\.rd-timers\s*\{[^}]*display:\s*flex/);
     assert.match(timersCss, /\.rd-timers\s*\{[^}]*padding:\s*16px 16px 18px/);
     assert.match(timersCss, /\.rd-timers-label\s*\{[^}]*text-transform:\s*uppercase/);
-    assert.match(timersCss, /\.rd-timers-headline-next\s*\{[^}]*font-size:\s*1\.6rem/);
-    assert.match(timersCss, /\.rd-timers-add\s*\{[^}]*font-size:\s*1\.35rem/);
+    assert.match(timersCss, /\.rd-timers-headline-next\s*\{[^}]*font-size:\s*1\.5rem/);
+    assert.match(timersCss, /\.rd-timers-icon-button\s*\{[^}]*width:\s*32px/);
     assert.match(timersCss, /var\(--primary-text-color\)/);
     assert.match(timersCss, /var\(--secondary-text-color\)/);
     assert.match(timersCss, /var\(--primary-color\)/);
@@ -298,11 +303,10 @@ describe("renderTimers", () => {
     assert.equal(parent.querySelector(".rd-timers-headline")?.className.includes("rd-timers-headline-next"), true);
     assert.equal(parent.querySelector(".rd-timers-detail")?.textContent, "2 timers");
     assert.equal(parent.querySelector(".rd-timers-detail")?.hidden, false);
-    assert.equal(parent.querySelector(".rd-timers-mute-label")?.textContent, "Mute timers");
+    assert.equal(parent.querySelector(".rd-timers-head")?.querySelector(".rd-timers-switch")?.getAttribute("aria-label"), "Mute timers");
     assert.equal(parent.querySelector(".rd-timers-add"), null);
     assert.equal(classNames(parent).every((name) => name.startsWith("rd-timers")), true);
     assert.equal(textOf(parent).includes("Chimes"), false);
-    assert.equal(textOf(parent).includes("Mute timers"), true);
 
     const idle = buildTimers(satellite({ timers: [sensor("sensor.timers", "Timers", "0")] })) as TimersView;
     renderTimers(parent as unknown as HTMLElement, idle);
@@ -312,6 +316,24 @@ describe("renderTimers", () => {
     assert.equal(parent.querySelector(".rd-timers-kicker")?.hidden, true);
     assert.equal(parent.querySelector(".rd-timers-detail")?.hidden, true);
     assert.equal(parent.querySelector(".rd-timers-switch"), null);
+  });
+
+  it("handles SVG children whose className is an SVGAnimatedString", () => {
+    const doc = (globalThis as { document: { createElementNS?: (ns: string, tag: string) => unknown } }).document;
+    const prevNs = doc.createElementNS;
+    doc.createElementNS = (_ns: string, tag: string) => {
+      const node = new DomNode(tag) as unknown as { className: unknown };
+      node.className = { baseVal: "", animVal: "" };
+      return node;
+    };
+    try {
+      const parent = mount(view(), undefined, () => undefined);
+      assert.equal(parent.querySelector(".rd-timers-headline")?.textContent, "5 min");
+      assert.equal(parent.querySelector(".rd-timers-add")?.getAttribute("aria-label"), "Add timer");
+    } finally {
+      if (prevNs) doc.createElementNS = prevNs;
+      else delete doc.createElementNS;
+    }
   });
 
   it("tells the host the next mute state and leaves other switches alone", () => {
@@ -339,20 +361,86 @@ describe("renderTimers", () => {
   it("opens a dialog and starts a timer from hours, minutes, and seconds", () => {
     const starts: TimerStart[] = [];
     const parent = mount(view(), undefined, (start) => starts.push(start));
-    assert.equal(parent.querySelector(".rd-timers-add")?.textContent, "Add");
+    assert.equal(parent.querySelector(".rd-timers-head")?.querySelector(".rd-timers-add")?.getAttribute("aria-label"), "Add timer");
     parent.querySelector(".rd-timers-add")?.click();
     assert.equal(parent.querySelector(".rd-timers-dialog")?.hidden, false);
     parent.querySelector(".rd-timers-set")?.click();
     assert.equal(parent.querySelector(".rd-timers-error")?.textContent, "Time is required");
     assert.equal(parent.querySelector(".rd-timers-error")?.hidden, false);
+    const hours = parent.querySelector(".rd-timers-hours");
     const minutes = parent.querySelector(".rd-timers-minutes");
+    const seconds = parent.querySelector(".rd-timers-seconds");
     const name = parent.querySelector(".rd-timers-name");
-    assert.ok(minutes && name);
+    assert.ok(hours && minutes && seconds && name);
+    assert.equal(hours.value, "");
+    assert.equal(minutes.value, "");
+    assert.equal(seconds.value, "");
+    assert.equal(hours.placeholder, "0");
+    assert.equal(minutes.placeholder, "0");
+    assert.equal(seconds.placeholder, "0");
     minutes.value = "5";
     name.value = "Eggs";
     parent.querySelector(".rd-timers-set")?.click();
     assert.deepEqual(starts, [{ name: "Eggs", hours: 0, minutes: 5, seconds: 0 }]);
     assert.equal(parent.querySelector(".rd-timers-dialog")?.hidden, true);
+    assert.equal(minutes.value, "");
+  });
+
+  it("parses vs_list_timers payloads and renders countdown rows with delete buttons", () => {
+    const parsed = timerListFromPayload({
+      response: {
+        timers: [
+          {
+            timer_id: "t1",
+            name: "Eggs",
+            total_seconds: 600,
+            seconds_left: 569,
+            is_active: true,
+            ends_at: "2026-11-17T02:56:54.000Z",
+            finished: false,
+          },
+          {
+            timer_id: "t2",
+            name: "Steep",
+            total_seconds: 180,
+            seconds_left: 95,
+            is_active: false,
+            finished: false,
+          },
+        ],
+      },
+    });
+    assert.equal(parsed.timers?.length, 2);
+    const failed = timerListFromFailure(new Error("timeout"), parsed);
+    assert.equal(failed.error, "timeout");
+    assert.equal(failed.timers?.length, 2);
+
+    const nowMs = Date.parse("2026-11-17T02:50:00.000Z");
+    const built = buildTimers(
+      satellite({ timers: [sensor("sensor.timers", "Timers", "2")] }),
+      undefined,
+      parsed,
+      nowMs,
+    );
+    assert.ok(built);
+    assert.deepEqual(built.items, [
+      { timerId: "t1", displayTime: "6:54", name: "Eggs", detail: "" },
+      { timerId: "t2", displayTime: "1:35", name: "Steep", detail: "Paused" },
+    ]);
+
+    const cancelled: string[] = [];
+    const parent = new DomNode("div");
+    renderTimers(parent as unknown as HTMLElement, built, undefined, undefined, (id) => cancelled.push(id));
+    assert.equal(parent.querySelector(".rd-timers-row")?.hidden, true);
+    const rows = parent.querySelector(".rd-timers-rows")?.children ?? [];
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0]?.querySelector(".rd-timers-item-time")?.textContent, "6:54");
+    assert.equal(rows[0]?.querySelector(".rd-timers-item-label")?.textContent, "Eggs");
+    assert.equal(rows[1]?.querySelector(".rd-timers-item-meta")?.textContent, "Paused");
+    const del0 = rows[0]?.querySelector(".rd-timers-delete");
+    assert.ok(del0);
+    del0.click();
+    assert.deepEqual(cancelled, ["t1"]);
   });
 });
 
@@ -391,5 +479,20 @@ describe("timer start service", () => {
       minutes: 2,
       seconds: 0,
     });
+  });
+
+  it("discovers vs_list_timers and vs_cancel_timer for the device stem", () => {
+    const allServices = {
+      esphome: {
+        ...services.esphome,
+        ks_updoot_vs_cancel_timer: { fields: { timer_id: {} } },
+        ks_updoot2_vs_list_timers: { fields: {} },
+        ks_updoot2_vs_cancel_timer: { fields: { timer_id: {} } },
+      },
+    };
+    assert.equal(timerListService(allServices, "updoot"), "ks_updoot_vs_list_timers");
+    assert.equal(timerListService(allServices, "updoot2"), "ks_updoot2_vs_list_timers");
+    assert.equal(timerCancelService(allServices, "updoot"), "ks_updoot_vs_cancel_timer");
+    assert.equal(timerCancelService(allServices, "updoot2"), "ks_updoot2_vs_cancel_timer");
   });
 });

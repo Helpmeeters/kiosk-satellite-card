@@ -17,6 +17,7 @@ import {
   type PlaybackMix,
   type PlayerSnapshot,
   type RedisplayView,
+  type TimeLocale,
 } from "./redisplay";
 import { popupSurfaceCss } from "./redisplay-popup";
 import {
@@ -33,19 +34,52 @@ import {
 import { agentCss, agentHasPanel, buildAgent, renderAgent } from "./redisplay-agent";
 import { buildDevice, deviceCss, renderDevice } from "./redisplay-device";
 import { buildPower, powerCss, renderPower } from "./redisplay-power";
-import { buildIntercom, intercomCss, renderIntercom } from "./redisplay-intercom";
-import { assistStem, buildTimers, renderTimers, timerStartService, timersCss, type TimerStart } from "./redisplay-timers";
+import { buildIntercom, intercomCss, renderIntercom, type IntercomModeId } from "./redisplay-intercom";
+import {
+  buildCollapsedView,
+  isTileExpandEvent,
+  isTitleBarToggleEvent,
+  type CollapsedView,
+} from "./redisplay-collapsed";
+import {
+  buildAskPrompt,
+  extractConversationId,
+  extractConversationSpeech,
+  resolveAskPipeline,
+  type AskPipelineInfo,
+} from "./redisplay-ask";
+import {
+  assistStem,
+  buildTimers,
+  renderTimers,
+  timerCancelService,
+  timerListFromFailure,
+  timerListFromPayload,
+  timerListService,
+  timerStartService,
+  timersCss,
+  type TimerList,
+  type TimerStart,
+} from "./redisplay-timers";
 
 interface Hass {
   states: Record<string, EntityState>;
-  devices?: Record<string, { id: string; name?: string | null; name_by_user?: string | null; manufacturer?: string | null }>;
+  locale?: TimeLocale;
+  devices?: Record<
+    string,
+    { id: string; name?: string | null; name_by_user?: string | null; manufacturer?: string | null; area_id?: string | null }
+  >;
   entities?: Record<string, RegistryEntry & { entity_id?: string }>;
+  areas?: Record<string, { area_id?: string; name?: string | null }>;
   services?: Record<string, Record<string, unknown> | undefined>;
   callService: (
     domain: string,
     service: string,
     data?: Record<string, unknown>,
     target?: Record<string, unknown>,
+    /** Show a toast when the call fails. This is not the response flag. */
+    notifyOnError?: boolean,
+    /** Include the service response. Required to read script.kiosk_satellite_alarms. */
     returnResponse?: boolean,
   ) => Promise<unknown>;
   /** Home Assistant websocket. Optional so a stub hass still typechecks. */
@@ -309,6 +343,7 @@ button.text {
   justify-content: space-between;
   gap: 12px;
   padding: 12px 16px 0;
+  cursor: pointer;
 }
 .title-tools {
   display: flex;
@@ -385,24 +420,24 @@ button.text {
 .tabs {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 4px;
+  gap: 6px;
   margin: 8px 10px 0;
   padding: 6px;
-  border-radius: 22px;
+  border-radius: 18px;
   background: color-mix(in srgb, var(--primary-text-color) 7%, transparent);
 }
-.tabs button {
+.tabs button.tab {
   min-width: 0;
-  min-height: 64px;
+  min-height: 76px;
   margin: 0;
-  padding: 8px 2px 6px;
+  padding: 6px 2px 5px;
   border: none;
-  border-radius: 16px;
+  border-radius: 14px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: 3px;
   background: transparent;
   color: var(--secondary-text-color);
   font: inherit;
@@ -414,20 +449,20 @@ button.text {
   white-space: normal;
   cursor: pointer;
 }
-.tabs button svg {
-  width: 22px;
-  height: 22px;
+.tabs button.tab svg {
+  width: 20px;
+  height: 20px;
   flex: 0 0 auto;
 }
-.tabs button span {
+.tabs button.tab span {
   display: block;
   max-width: 100%;
 }
-.tabs button[aria-selected="true"] {
+.tabs button.tab[aria-selected="true"] {
   background: var(--primary-color);
   color: var(--text-primary-color, #fff);
 }
-.tabs button:focus-visible {
+.tabs button.tab:focus-visible {
   outline: 2px solid var(--primary-color);
   outline-offset: -2px;
 }
@@ -435,6 +470,8 @@ button.text {
 .rd-info {
   position: relative;
   flex: 0 0 auto;
+  display: flex;
+  align-items: center;
 }
 .rd-master-trigger,
 .rd-mute,
@@ -447,7 +484,7 @@ button.text {
   font: inherit;
 }
 .rd-master-trigger {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 4px;
   height: 24px;
@@ -456,6 +493,9 @@ button.text {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   line-height: 1;
+}
+.rd-master-trigger [data-part="master-icon"] {
+  display: grid;
 }
 .rd-mute,
 .rd-info-button {
@@ -542,6 +582,313 @@ button.text {
   padding: 8px 12px;
   font-size: 0.95rem;
 }
+ha-card.is-collapsed .tabs {
+  margin: 8px 10px 10px;
+}
+.mini-tile {
+  position: relative;
+  min-width: 0;
+  min-height: 76px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--primary-text-color) 6%, transparent);
+  overflow: hidden;
+  cursor: pointer;
+}
+.mini-now {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px;
+}
+.mini-now-art {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+}
+.mini-now-scrim {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.25), rgba(0, 0, 0, 0.58));
+  pointer-events: none;
+}
+.mini-now-play {
+  position: relative;
+  z-index: 1;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: var(--primary-color);
+  color: var(--text-primary-color, #fff);
+  cursor: pointer;
+}
+.mini-now-play span {
+  display: grid;
+}
+.mini-now-play svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+.mini-now-transport {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 4px;
+}
+.mini-now-step {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--ha-card-background, var(--card-background-color)) 76%, transparent);
+  color: var(--primary-text-color);
+  cursor: pointer;
+}
+.mini-now-step svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+.mini-now-play:disabled,
+.mini-now-step:disabled,
+.mini-intercom-mode:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.mini-now-play:focus-visible,
+.mini-now-step:focus-visible,
+.mini-intercom-mode:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+.mini-alarms,
+.mini-agent {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 6px 4px;
+  text-align: center;
+}
+.mini-alarms.is-ringing {
+  background: color-mix(in srgb, var(--error-color, #ba1a1a) 16%, transparent);
+}
+.mini-kicker {
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: var(--secondary-text-color);
+  line-height: 1.15;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mini-value {
+  font-size: 0.96rem;
+  font-weight: 600;
+  color: var(--primary-text-color);
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mini-alarms.is-ringing .mini-value {
+  color: var(--error-color, #ba1a1a);
+}
+.mini-alarms.is-none .mini-value {
+  color: var(--secondary-text-color);
+  font-weight: 500;
+}
+.mini-agent .mini-value {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-size: 0.9rem;
+}
+.mini-agent-assist {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  max-width: 100%;
+  margin-top: 2px;
+  padding: 3px 8px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--primary-color);
+  color: var(--text-primary-color, #fff);
+  font: inherit;
+  font-size: 0.68rem;
+  font-weight: 600;
+  line-height: 1.15;
+  cursor: pointer;
+}
+.mini-agent-assist svg {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  display: block;
+}
+.mini-agent-assist span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mini-agent-assist:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+.rd-ask {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 16px 0;
+}
+ha-card.is-collapsed .rd-ask {
+  margin: 0 10px 10px;
+}
+.rd-ask-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.rd-ask-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--divider-color, rgba(127, 127, 127, 0.35));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--primary-text-color) 6%, transparent);
+  color: var(--primary-text-color);
+  font: inherit;
+  font-size: 0.92rem;
+}
+.rd-ask-input::placeholder {
+  color: var(--secondary-text-color);
+}
+.rd-ask-input:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 1px;
+}
+.rd-ask-input:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.rd-ask-button {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--primary-color);
+  color: var(--text-primary-color, #fff);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.rd-ask-button.is-busy {
+  background: color-mix(in srgb, var(--primary-text-color) 14%, transparent);
+  color: var(--primary-text-color);
+}
+.rd-ask-button:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+.rd-ask-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 999px;
+  animation: rd-ask-spin 0.75s linear infinite;
+}
+@keyframes rd-ask-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.rd-ask-reply {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--primary-text-color) 6%, transparent);
+  color: var(--secondary-text-color);
+  font-size: 0.84rem;
+  line-height: 1.3;
+}
+.rd-ask-reply.is-error {
+  color: var(--error-color, #ba1a1a);
+  background: color-mix(in srgb, var(--error-color, #ba1a1a) 12%, transparent);
+}
+.rd-ask-reply-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.rd-ask-reply-close {
+  flex: 0 0 auto;
+  border: 0;
+  padding: 0 2px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.mini-intercom {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: 3px;
+  padding: 3px;
+}
+.mini-intercom-mode {
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 2px 3px;
+  border: 0;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--primary-text-color) 6%, transparent);
+  color: var(--primary-text-color);
+  font: inherit;
+  font-size: 0.68rem;
+  font-weight: 600;
+  line-height: 1.1;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mini-intercom-mode.is-on {
+  background: var(--primary-color);
+  color: var(--text-primary-color, #fff);
+}
 `;
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -571,6 +918,7 @@ const ICONS = {
   micOff: "M19 11h-1.7c0 .74-.16 1.43-.43 2.05l1.23 1.23c.56-.98.9-2.09.9-3.28zm-4.02.17c0-.06.02-.11.02-.17V5c0-1.66-1.34-3-3-3S9 3.34 9 5v.18l5.98 5.99zM4.27 3 3 4.27l6.01 6.01V11c0 1.66 1.33 3 2.99 3 .22 0 .44-.03.65-.08l1.66 1.66c-.71.33-1.5.52-2.31.52-2.76 0-5.3-2.1-5.3-5.1H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c.91-.13 1.77-.45 2.55-.9L19.73 21 21 19.73 4.27 3z",
   info: "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z",
   alert: "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z",
+  chat: "M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z",
 };
 
 const TABS = [
@@ -652,6 +1000,8 @@ export class KioskRedisplay extends HTMLElement {
   private tab: TabId = "now";
   private alarmList?: RedisplayAlarmList;
   private alarmsPresence?: "view" | "empty";
+  private timerList?: TimerList;
+  private timerListKey?: string;
   private timersKey?: string;
   private intercomKey?: string;
   private agentKey?: string;
@@ -659,6 +1009,18 @@ export class KioskRedisplay extends HTMLElement {
   private mix?: PlaybackMix;
   private dragId?: string;
   private clock = 0;
+  private collapsed = false;
+  private collapsedView?: CollapsedView;
+  private pendingMiniIntercomMode?: IntercomModeId;
+  private assistPipelines?: AskPipelineInfo[];
+  private assistPreferredPipeline?: string | null;
+  private assistPipelinesLoading = false;
+  private areaNames?: Record<string, string>;
+  private areaNamesLoading = false;
+  private askBusy = false;
+  private askOpen = false;
+  private askToken = 0;
+  private askConversationId?: string;
   /** Device whose saved tab has already been requested. */
   private tabLoadKey?: string;
   /** The user picked a tab after this card was bound, so a late read must not overwrite it. */
@@ -703,7 +1065,7 @@ export class KioskRedisplay extends HTMLElement {
   }
 
   getCardSize(): number {
-    return 6;
+    return this.collapsed ? 2 : 6;
   }
 
   setConfig(config: unknown): void {
@@ -739,6 +1101,8 @@ export class KioskRedisplay extends HTMLElement {
       this.boundDevice = this.deviceId;
       this.alarmList = undefined;
       this.alarmsPresence = undefined;
+      this.timerList = undefined;
+      this.timerListKey = undefined;
       this.timersKey = undefined;
       this.intercomKey = undefined;
       this.agentKey = undefined;
@@ -747,6 +1111,14 @@ export class KioskRedisplay extends HTMLElement {
       this.tab = "now";
       this.tabTouched = false;
       this.tabLoadKey = undefined;
+      this.collapsed = this.readCollapsedState(this.deviceId);
+      this.pendingMiniIntercomMode = undefined;
+      this.askToken += 1;
+      this.askBusy = false;
+      this.askOpen = this.readAskOpenState(this.deviceId);
+      this.askConversationId = undefined;
+      this.clearAskReply();
+      this.paintAskBusy();
     }
     this.model = buildModel({
       deviceId: this.deviceId,
@@ -757,7 +1129,7 @@ export class KioskRedisplay extends HTMLElement {
     });
     const playerId = this.model.media.playerId;
     this.player = playerSnapshot(playerId ? this._hass.states[playerId] : undefined);
-    const view = buildRedisplay(this.model, this.player, Date.now());
+    const view = buildRedisplay(this.model, this.player, Date.now(), this._hass.locale);
     this.view = view;
     this.mix = playbackMix(this.model);
     this.ensureShell();
@@ -778,15 +1150,27 @@ export class KioskRedisplay extends HTMLElement {
     this.paintPower();
     this.paintMute();
     this.paintInfo();
+    this.paintCollapsed();
+    this.paintAsk();
+    this.applyCollapsedState();
     this.loadSavedTab();
+    this.loadAssistPipelines();
+    this.loadAreaNames();
     this.showTab(this.tab);
   }
 
   private advanceProgress(): void {
-    if (!this.model || !this.player || !this.view?.playing) return;
-    const view = buildRedisplay(this.model, this.player, Date.now());
-    this.view = view;
-    this.paintProgress(view);
+    if (this.model && this.player && this.view?.playing) {
+      const view = buildRedisplay(this.model, this.player, Date.now(), this._hass?.locale);
+      this.view = view;
+      this.paintProgress(view);
+    }
+    if (this.timerList?.timers?.some((entry) => entry.isActive && !entry.finished)) {
+      this.paintTimers();
+    }
+    if (this.collapsed && this.collapsedView?.alarms.kind === "timer") {
+      this.paintCollapsed();
+    }
   }
 
   private ensureShell(): void {
@@ -799,6 +1183,11 @@ export class KioskRedisplay extends HTMLElement {
     card.dataset.release = KioskRedisplay.releaseMarker;
     const header = document.createElement("header");
     header.className = "title-row";
+    header.addEventListener("click", (event) => {
+      const path = typeof event.composedPath === "function" ? event.composedPath() : event.target ? [event.target] : [];
+      if (!isTitleBarToggleEvent(path)) return;
+      this.toggleCollapsed();
+    });
     header.addEventListener("keydown", (event) => {
       if (!(event instanceof KeyboardEvent) || event.key !== "Escape") return;
       this.setMenu("master", false);
@@ -825,6 +1214,7 @@ export class KioskRedisplay extends HTMLElement {
     header.append(copy, tools);
     const panels = document.createElement("div");
     panels.className = "panels";
+    panels.dataset.part = "panels";
     for (const tab of TABS) {
       const panel = document.createElement("div");
       panel.className = "panel";
@@ -850,6 +1240,20 @@ export class KioskRedisplay extends HTMLElement {
     nav.setAttribute("role", "tablist");
     nav.setAttribute("aria-label", "Kiosk Satellite Card");
     for (const tab of TABS) nav.append(this.tabButton(tab));
+    const minis: ReadonlyArray<[TabId, HTMLElement]> = [
+      ["now", this.miniNowTile()],
+      ["alarms", this.miniAlarmsTile()],
+      ["intercom", this.miniIntercomTile()],
+      ["agent", this.miniAgentTile()],
+    ];
+    for (const [tabId, tile] of minis) {
+      tile.addEventListener("click", (event) => {
+        const path = typeof event.composedPath === "function" ? event.composedPath() : event.target ? [event.target] : [];
+        if (!isTileExpandEvent(path)) return;
+        this.expandToTab(tabId);
+      });
+      nav.append(tile);
+    }
     card.addEventListener("click", (event) => {
       const path = event.composedPath();
       if (path.some((node) => node instanceof Element && node.classList.contains("rd-power-button"))) {
@@ -857,7 +1261,7 @@ export class KioskRedisplay extends HTMLElement {
         this.setMenu("info", false);
       }
     });
-    card.append(header, nav, panels);
+    card.append(header, nav, this.askBar(), panels);
     root.append(style, card);
   }
 
@@ -980,7 +1384,13 @@ export class KioskRedisplay extends HTMLElement {
     const label = document.createElement("span");
     label.textContent = tab.label;
     button.append(icon(tab.icon), label);
-    button.addEventListener("click", () => this.showTab(tab.id, true));
+    button.addEventListener("click", () => {
+      if (!this.collapsed && this.tab === tab.id) {
+        this.toggleCollapsed();
+        return;
+      }
+      this.showTab(tab.id, true);
+    });
     return button;
   }
 
@@ -1336,7 +1746,7 @@ export class KioskRedisplay extends HTMLElement {
     const host = this.piece("alarms-host");
     const model = this.model;
     if (!host || !model) return;
-    const view = buildRedisplayAlarms(model, this.alarmList);
+    const view = buildRedisplayAlarms(model, this.alarmList, this._hass?.locale);
     if (!view) {
       if (this.alarmsPresence !== "empty") {
         this.alarmsPresence = "empty";
@@ -1362,12 +1772,15 @@ export class KioskRedisplay extends HTMLElement {
     if (!hass || !kioskName || !device) return;
     const call = redisplayAlarmServiceCall(kioskName, action, extra);
     void hass
-      .callService(call.domain, call.service, call.data, undefined, true)
+      .callService(call.domain, call.service, call.data, undefined, true, true)
       .then(
         (result) => {
           if (this.deviceId !== device) return;
           this.alarmList = alarmListFromPayload(result, this.alarmList);
           this.paintAlarms();
+          if (action !== "list" && !this.alarmList.error) {
+            this.runAlarmScript(kioskName, "list");
+          }
         },
         (error: unknown) => {
           if (this.deviceId !== device) return;
@@ -1381,8 +1794,21 @@ export class KioskRedisplay extends HTMLElement {
     const host = this.piece("timers-host");
     const model = this.model;
     if (!host || !model) return;
-    const view = buildTimers(model) ?? { headline: "No timers" };
-    const service = timerStartService(this._hass?.services, assistStem(model.assistEntityId));
+    const stem = assistStem(model.assistEntityId);
+    const service = timerStartService(this._hass?.services, stem);
+    const listService = timerListService(this._hass?.services, stem);
+    const cancelService = timerCancelService(this._hass?.services, stem);
+    if (listService) {
+      const listKey = JSON.stringify({
+        device: this.deviceId,
+        timers: model.timers.map((line) => [line.entityId, line.state]),
+      });
+      if (listKey !== this.timerListKey) {
+        this.timerListKey = listKey;
+        this.runTimerList(listService);
+      }
+    }
+    const view = buildTimers(model, this._hass?.locale, this.timerList, Date.now()) ?? { headline: "No timers" };
     const sensors = model.timers.length > 0;
     if (!sensors && !service) {
       if (this.timersKey !== "empty") {
@@ -1391,12 +1817,42 @@ export class KioskRedisplay extends HTMLElement {
       }
       return;
     }
-    const key = JSON.stringify({ view, service: service ?? "" });
+    const key = JSON.stringify({ view, service: service ?? "", cancel: cancelService ?? "" });
     if (key === this.timersKey && host.querySelector(".rd-timers")) return;
     this.timersKey = key;
     const start = service
       ? (data: TimerStart) => {
-          this.call("esphome", service, { ...data });
+          const hass = this._hass;
+          if (!hass) return;
+          void hass.callService("esphome", service, { ...data }).then(
+            () => {
+              if (listService) this.runTimerList(listService);
+            },
+            () => undefined,
+          );
+        }
+      : undefined;
+    const cancel = cancelService
+      ? (timerId: string) => {
+          const hass = this._hass;
+          if (!hass) return;
+          if (this.timerList?.timers) {
+            this.timerList = {
+              ...this.timerList,
+              timers: this.timerList.timers.filter((entry) => entry.timerId !== timerId),
+            };
+            this.paintTimers();
+          }
+          void hass.callService("esphome", cancelService, { timer_id: timerId }).then(
+            () => {
+              if (listService) this.runTimerList(listService);
+            },
+            (error: unknown) => {
+              this.timerList = timerListFromFailure(error, this.timerList);
+              this.paintTimers();
+              if (listService) this.runTimerList(listService);
+            },
+          );
         }
       : undefined;
     renderTimers(
@@ -1406,6 +1862,25 @@ export class KioskRedisplay extends HTMLElement {
         this.call("switch", on ? "turn_on" : "turn_off", undefined, { entity_id: entityId });
       },
       start,
+      cancel,
+    );
+  }
+
+  private runTimerList(listService: string): void {
+    const hass = this._hass;
+    const device = this.deviceId;
+    if (!hass || !device) return;
+    void hass.callService("esphome", listService, {}, undefined, true, true).then(
+      (result) => {
+        if (this.deviceId !== device) return;
+        this.timerList = timerListFromPayload(result, this.timerList);
+        this.paintTimers();
+      },
+      (error: unknown) => {
+        if (this.deviceId !== device) return;
+        this.timerList = timerListFromFailure(error, this.timerList);
+        this.paintTimers();
+      },
     );
   }
 
@@ -1586,6 +2061,590 @@ export class KioskRedisplay extends HTMLElement {
   private insidePart(path: readonly EventTarget[], part: string): boolean {
     const host = this.piece(part);
     return Boolean(host && path.includes(host));
+  }
+
+  private miniNowTile(): HTMLElement {
+    const tile = document.createElement("div");
+    tile.className = "mini-tile mini-now";
+    tile.dataset.mini = "now";
+    tile.hidden = true;
+
+    const art = document.createElement("img");
+    art.className = "mini-now-art";
+    art.alt = "";
+    art.dataset.part = "mini-now-art";
+    art.hidden = true;
+
+    const scrim = document.createElement("div");
+    scrim.className = "mini-now-scrim";
+    scrim.dataset.part = "mini-now-scrim";
+    scrim.hidden = true;
+
+    const play = document.createElement("button");
+    play.type = "button";
+    play.className = "mini-now-play";
+    play.dataset.part = "mini-now-play";
+    play.setAttribute("aria-label", "Play");
+    const playIcon = document.createElement("span");
+    playIcon.dataset.part = "mini-now-play-icon";
+    playIcon.append(icon(ICONS.play));
+    const pauseIcon = document.createElement("span");
+    pauseIcon.dataset.part = "mini-now-pause-icon";
+    pauseIcon.hidden = true;
+    pauseIcon.append(icon(ICONS.pause));
+    play.append(playIcon, pauseIcon);
+    play.addEventListener("click", () => {
+      this.transport(this.view?.playing ? "media_pause" : "media_play");
+    });
+
+    const transport = document.createElement("div");
+    transport.className = "mini-now-transport";
+    const prev = document.createElement("button");
+    prev.type = "button";
+    prev.className = "mini-now-step";
+    prev.dataset.part = "mini-now-prev";
+    prev.setAttribute("aria-label", "Previous");
+    prev.append(icon(ICONS.previous));
+    prev.addEventListener("click", () => this.transport("media_previous_track"));
+
+    const next = document.createElement("button");
+    next.type = "button";
+    next.className = "mini-now-step";
+    next.dataset.part = "mini-now-next";
+    next.setAttribute("aria-label", "Next");
+    next.append(icon(ICONS.next));
+    next.addEventListener("click", () => this.transport("media_next_track"));
+
+    transport.append(prev, next);
+    tile.append(art, scrim, play, transport);
+    return tile;
+  }
+
+  private miniAlarmsTile(): HTMLElement {
+    const tile = document.createElement("div");
+    tile.className = "mini-tile mini-alarms";
+    tile.dataset.mini = "alarms";
+    tile.dataset.part = "mini-alarms";
+    tile.hidden = true;
+
+    const kicker = document.createElement("span");
+    kicker.className = "mini-kicker";
+    kicker.dataset.part = "mini-alarms-kicker";
+    const value = document.createElement("span");
+    value.className = "mini-value";
+    value.dataset.part = "mini-alarms-value";
+    tile.append(kicker, value);
+    return tile;
+  }
+
+  private miniIntercomTile(): HTMLElement {
+    const tile = document.createElement("div");
+    tile.className = "mini-tile mini-intercom";
+    tile.dataset.mini = "intercom";
+    tile.dataset.part = "mini-intercom";
+    tile.hidden = true;
+
+    const modes: ReadonlyArray<readonly [IntercomModeId, string]> = [
+      ["off", "Off"],
+      ["ring", "Ring"],
+      ["answer", "Answer"],
+      ["dnd", "DND"],
+    ];
+    for (const [id, label] of modes) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "mini-intercom-mode";
+      button.dataset.miniMode = id;
+      button.textContent = label;
+      button.setAttribute("aria-pressed", "false");
+      button.addEventListener("click", () => this.handleMiniIntercom(id));
+      tile.append(button);
+    }
+    return tile;
+  }
+
+  private miniAgentTile(): HTMLElement {
+    const tile = document.createElement("div");
+    tile.className = "mini-tile mini-agent";
+    tile.dataset.mini = "agent";
+    tile.dataset.part = "mini-agent";
+    tile.hidden = true;
+
+    const kicker = document.createElement("span");
+    kicker.className = "mini-kicker";
+    kicker.dataset.part = "mini-agent-kicker";
+    const value = document.createElement("span");
+    value.className = "mini-value";
+    value.dataset.part = "mini-agent-value";
+    const assistButton = document.createElement("button");
+    assistButton.type = "button";
+    assistButton.className = "mini-agent-assist";
+    assistButton.dataset.part = "mini-agent-assist";
+    assistButton.setAttribute("aria-label", "Ask Assist");
+    const assistLabel = document.createElement("span");
+    assistLabel.textContent = "Ask";
+    assistButton.append(icon(ICONS.chat), assistLabel);
+    assistButton.addEventListener("click", () => {
+      this.toggleAsk();
+    });
+    tile.append(kicker, value, assistButton);
+    return tile;
+  }
+
+  private paintCollapsed(): void {
+    if (!this.model || !this.view) return;
+    const collapsed = buildCollapsedView(this.model, this.view, this._hass?.locale, Date.now());
+    this.collapsedView = collapsed;
+
+    const intercom = collapsed.intercom;
+    if (this.pendingMiniIntercomMode && intercom.enabledOn !== false && intercom.answerId) {
+      const pending = this.pendingMiniIntercomMode;
+      this.pendingMiniIntercomMode = undefined;
+      const match = intercom.buttons.find((item) => item.id === pending);
+      if (match?.option && !match.selected) {
+        this.call("select", "select_option", { option: match.option }, { entity_id: intercom.answerId });
+      }
+    }
+
+    const art = this.piece("mini-now-art");
+    const scrim = this.piece("mini-now-scrim");
+    const picture = collapsed.now.picture;
+    if (art instanceof HTMLImageElement) {
+      if (picture && art.getAttribute("src") !== picture) art.src = picture;
+      art.hidden = !picture;
+    }
+    if (scrim) scrim.hidden = !picture;
+
+    const play = this.piece("mini-now-play");
+    const playIcon = this.piece("mini-now-play-icon");
+    const pauseIcon = this.piece("mini-now-pause-icon");
+    const hasPlayer = Boolean(collapsed.now.playerId);
+    if (play instanceof HTMLButtonElement) {
+      play.disabled = !hasPlayer;
+      play.setAttribute("aria-label", collapsed.now.playing ? "Pause" : "Play");
+    }
+    if (playIcon) playIcon.hidden = collapsed.now.playing;
+    if (pauseIcon) pauseIcon.hidden = !collapsed.now.playing;
+    const prev = this.piece("mini-now-prev");
+    const next = this.piece("mini-now-next");
+    if (prev instanceof HTMLButtonElement) prev.disabled = !hasPlayer;
+    if (next instanceof HTMLButtonElement) next.disabled = !hasPlayer;
+
+    const alarmsTile = this.piece("mini-alarms");
+    if (alarmsTile) {
+      alarmsTile.classList.toggle("is-ringing", collapsed.alarms.kind === "ringing");
+      alarmsTile.classList.toggle("is-none", collapsed.alarms.kind === "none");
+    }
+    this.setText("mini-alarms-kicker", collapsed.alarms.kicker);
+    this.setText("mini-alarms-value", collapsed.alarms.value);
+
+    const intercomTile = this.piece("mini-intercom");
+    if (intercomTile) {
+      for (const node of intercomTile.querySelectorAll(".mini-intercom-mode")) {
+        if (!(node instanceof HTMLButtonElement)) continue;
+        const mode = node.dataset.miniMode;
+        const item = intercom.buttons.find((button) => button.id === mode);
+        if (!item) continue;
+        node.disabled = item.disabled;
+        node.classList.toggle("is-on", item.selected);
+        node.setAttribute("aria-pressed", item.selected ? "true" : "false");
+      }
+    }
+
+    this.setText("mini-agent-kicker", collapsed.agent.kicker);
+    this.setText("mini-agent-value", collapsed.agent.wakeWord);
+    const assistButton = this.piece("mini-agent-assist");
+    if (assistButton) {
+      const label = collapsed.agent.assistant ? `Ask ${collapsed.agent.assistant}` : "Ask Assist";
+      assistButton.setAttribute("aria-label", label);
+      assistButton.setAttribute("aria-pressed", this.askOpen ? "true" : "false");
+      assistButton.title = label;
+    }
+  }
+
+  private askBar(): HTMLElement {
+    const wrap = document.createElement("form");
+    wrap.className = "rd-ask";
+    wrap.dataset.part = "ask";
+    wrap.addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (!this.askBusy) void this.submitAsk();
+    });
+
+    const row = document.createElement("div");
+    row.className = "rd-ask-row";
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "rd-ask-input";
+    input.dataset.part = "ask-input";
+    input.placeholder = "Ask Assist";
+    input.setAttribute("aria-label", "Ask Assist");
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "rd-ask-button";
+    button.dataset.part = "ask-button";
+    button.setAttribute("aria-label", "Ask");
+
+    const spinner = document.createElement("span");
+    spinner.className = "rd-ask-spinner";
+    spinner.dataset.part = "ask-spinner";
+    spinner.hidden = true;
+    spinner.setAttribute("aria-hidden", "true");
+
+    const label = document.createElement("span");
+    label.dataset.part = "ask-button-label";
+    label.textContent = "Ask";
+
+    button.append(spinner, label);
+    button.addEventListener("click", () => {
+      if (this.askBusy) this.cancelAsk();
+      else void this.submitAsk();
+    });
+
+    row.append(input, button);
+
+    const reply = document.createElement("div");
+    reply.className = "rd-ask-reply";
+    reply.dataset.part = "ask-reply";
+    reply.hidden = true;
+
+    const replyText = document.createElement("span");
+    replyText.className = "rd-ask-reply-text";
+    replyText.dataset.part = "ask-reply-text";
+
+    const replyClose = document.createElement("button");
+    replyClose.type = "button";
+    replyClose.className = "rd-ask-reply-close";
+    replyClose.setAttribute("aria-label", "Dismiss reply");
+    replyClose.textContent = "×";
+    replyClose.addEventListener("click", () => this.clearAskReply());
+
+    reply.append(replyText, replyClose);
+    wrap.append(row, reply);
+    return wrap;
+  }
+
+  private paintAsk(): void {
+    const input = this.piece("ask-input");
+    if (!(input instanceof HTMLInputElement)) return;
+    const target = this.model?.name ? `Ask ${this.model.name}` : "Ask Assist";
+    if (input.placeholder !== target) input.placeholder = target;
+    if (input.getAttribute("aria-label") !== target) input.setAttribute("aria-label", target);
+    this.paintAskBusy();
+  }
+
+  private paintAskBusy(): void {
+    const input = this.piece("ask-input");
+    if (input instanceof HTMLInputElement) input.disabled = this.askBusy;
+    const button = this.piece("ask-button");
+    if (button instanceof HTMLButtonElement) {
+      button.classList.toggle("is-busy", this.askBusy);
+      button.setAttribute("aria-label", this.askBusy ? "Cancel" : "Ask");
+    }
+    const spinner = this.piece("ask-spinner");
+    if (spinner) spinner.hidden = !this.askBusy;
+    this.setText("ask-button-label", this.askBusy ? "Cancel" : "Ask");
+  }
+
+  private showAskReply(text: string, isError = false): void {
+    const reply = this.piece("ask-reply");
+    if (!reply) return;
+    reply.classList.toggle("is-error", isError);
+    this.setText("ask-reply-text", text);
+    reply.hidden = false;
+  }
+
+  private clearAskReply(): void {
+    const reply = this.piece("ask-reply");
+    if (!reply) return;
+    reply.hidden = true;
+    reply.classList.remove("is-error");
+    this.setText("ask-reply-text", "");
+  }
+
+  private toggleAsk(): void {
+    this.askOpen = !this.askOpen;
+    this.writeAskOpenState(this.deviceId, this.askOpen);
+    this.applyCollapsedState();
+    const assistButton = this.piece("mini-agent-assist");
+    if (assistButton) assistButton.setAttribute("aria-pressed", this.askOpen ? "true" : "false");
+    if (this.askOpen) {
+      const input = this.piece("ask-input");
+      if (input instanceof HTMLInputElement && !input.disabled) input.focus();
+    }
+  }
+
+  private loadAssistPipelines(): void {
+    if (this.assistPipelines || this.assistPipelinesLoading) return;
+    if (typeof this._hass?.callWS !== "function") return;
+    this.assistPipelinesLoading = true;
+    void this.fetchAssistPipelines().finally(() => {
+      this.assistPipelinesLoading = false;
+    });
+  }
+
+  private async fetchAssistPipelines(): Promise<void> {
+    const callWS = this._hass?.callWS;
+    if (typeof callWS !== "function") return;
+    try {
+      const result = (await Promise.resolve(callWS({ type: "assist_pipeline/pipeline/list" }))) as {
+        pipelines?: Array<{ id?: unknown; name?: unknown; conversation_engine?: unknown; language?: unknown }>;
+        preferred_pipeline?: unknown;
+      } | null;
+      if (result && Array.isArray(result.pipelines)) {
+        this.assistPipelines = result.pipelines.filter(
+          (entry): entry is AskPipelineInfo =>
+            Boolean(entry) && typeof entry.id === "string" && typeof entry.name === "string",
+        );
+      }
+      if (result && (typeof result.preferred_pipeline === "string" || result.preferred_pipeline === null)) {
+        this.assistPreferredPipeline = result.preferred_pipeline;
+      }
+    } catch {
+      // Fall back to default Assist pipeline when pipeline listing is unavailable.
+    }
+  }
+
+  private loadAreaNames(): void {
+    if (this.areaNames || this.areaNamesLoading) return;
+    if (typeof this._hass?.callWS !== "function") return;
+    this.areaNamesLoading = true;
+    void this.fetchAreaNames().finally(() => {
+      this.areaNamesLoading = false;
+    });
+  }
+
+  private async fetchAreaNames(): Promise<void> {
+    const callWS = this._hass?.callWS;
+    if (typeof callWS !== "function") return;
+    try {
+      const result = (await Promise.resolve(callWS({ type: "config/area_registry/list" }))) as Array<{
+        area_id?: unknown;
+        name?: unknown;
+      }> | null;
+      if (!Array.isArray(result)) return;
+      const map: Record<string, string> = {};
+      for (const area of result) {
+        if (typeof area?.area_id === "string" && typeof area.name === "string" && area.name.length > 0) {
+          map[area.area_id] = area.name;
+        }
+      }
+      this.areaNames = map;
+    } catch {
+      // Area context is optional if area registry cannot be read.
+    }
+  }
+
+  private resolveAreaName(): string | undefined {
+    if (!this.deviceId || !this._hass) return undefined;
+    const areaId = this._hass.devices?.[this.deviceId]?.area_id;
+    if (!areaId) return undefined;
+    const fromHass = this._hass.areas?.[areaId]?.name;
+    if (typeof fromHass === "string" && fromHass.length > 0) return fromHass;
+    return this.areaNames?.[areaId];
+  }
+
+  private cancelAsk(): void {
+    if (!this.askBusy) return;
+    this.askToken += 1;
+    this.askBusy = false;
+    this.paintAskBusy();
+  }
+
+  private async submitAsk(): Promise<void> {
+    const hass = this._hass;
+    const input = this.piece("ask-input");
+    if (!hass || !(input instanceof HTMLInputElement)) return;
+    const rawText = input.value.trim();
+    if (!rawText) return;
+
+    const token = ++this.askToken;
+    this.askBusy = true;
+    this.clearAskReply();
+    this.paintAskBusy();
+
+    const assistant = this.collapsedView?.agent.assistant;
+    let pipeline = resolveAskPipeline(
+      assistant,
+      this.assistPipelines ?? [],
+      this.assistPreferredPipeline,
+    );
+    const needsPipelineRefresh =
+      typeof hass.callWS === "function" &&
+      (!this.assistPipelines || (Boolean(assistant) && assistant!.toLowerCase() !== "preferred" && !pipeline));
+    if (needsPipelineRefresh) {
+      await this.fetchAssistPipelines();
+      if (this.askToken !== token) return;
+      pipeline = resolveAskPipeline(
+        assistant,
+        this.assistPipelines ?? [],
+        this.assistPreferredPipeline,
+      );
+    }
+
+    let areaName = this.resolveAreaName();
+    if (!areaName && !this.areaNames && typeof hass.callWS === "function") {
+      await this.fetchAreaNames();
+      if (this.askToken !== token) return;
+      areaName = this.resolveAreaName();
+    }
+
+    const prompt = buildAskPrompt(rawText, {
+      kioskName: this.model?.name ?? this.deviceId ?? "Kiosk",
+      areaName,
+      playerId: this.model?.media.playerId,
+      assistEntityId: this.model?.assistEntityId,
+      conversationEngine: pipeline?.conversation_engine,
+    });
+
+    const data: Record<string, unknown> = { text: prompt };
+    if (pipeline?.conversation_engine) data.agent_id = pipeline.conversation_engine;
+    if (pipeline?.language) data.language = pipeline.language;
+    if (this.askConversationId) data.conversation_id = this.askConversationId;
+
+    try {
+      const result = await hass.callService("conversation", "process", data, undefined, false, true);
+      if (this.askToken !== token) return;
+      input.value = "";
+      const nextConvId = extractConversationId(result);
+      if (nextConvId) this.askConversationId = nextConvId;
+      const speech = extractConversationSpeech(result);
+      if (speech) this.showAskReply(speech, false);
+    } catch (error) {
+      if (this.askToken !== token) return;
+      const message =
+        error && typeof error === "object" && "message" in error && typeof (error as { message?: unknown }).message === "string"
+          ? (error as { message: string }).message
+          : "Request failed";
+      this.showAskReply(message, true);
+    } finally {
+      if (this.askToken === token) {
+        this.askBusy = false;
+        this.paintAskBusy();
+      }
+    }
+  }
+
+  private handleMiniIntercom(id: IntercomModeId): void {
+    const view = this.collapsedView?.intercom;
+    if (!view) return;
+    const current = view.buttons.find((entry) => entry.id === id);
+    if (!current || current.disabled) return;
+    if (current.id === "off") {
+      if (!view.enabledId) return;
+      this.pendingMiniIntercomMode = undefined;
+      this.paintMiniIntercomPressed("off");
+      this.call("switch", "turn_off", undefined, { entity_id: view.enabledId });
+      return;
+    }
+    if (!view.enabledId && (!view.answerId || !current.option)) return;
+    this.paintMiniIntercomPressed(current.id);
+    if (view.enabledId && view.enabledOn === false) {
+      this.call("switch", "turn_on", undefined, { entity_id: view.enabledId });
+    }
+    if (view.answerId && current.option) {
+      this.pendingMiniIntercomMode = undefined;
+      this.call("select", "select_option", { option: current.option }, { entity_id: view.answerId });
+    } else {
+      this.pendingMiniIntercomMode = current.id;
+    }
+  }
+
+  private paintMiniIntercomPressed(id: IntercomModeId): void {
+    const tile = this.piece("mini-intercom");
+    if (!tile) return;
+    for (const node of tile.querySelectorAll(".mini-intercom-mode")) {
+      if (!(node instanceof HTMLButtonElement)) continue;
+      const on = node.dataset.miniMode === id;
+      node.classList.toggle("is-on", on);
+      node.setAttribute("aria-pressed", on ? "true" : "false");
+    }
+  }
+
+  private toggleCollapsed(): void {
+    this.collapsed = !this.collapsed;
+    this.writeCollapsedState(this.deviceId, this.collapsed);
+    this.setMenu("master", false);
+    this.setMenu("info", false);
+    this.dismissPower();
+    this.applyCollapsedState();
+  }
+
+  private expandToTab(tab: TabId): void {
+    if (!this.collapsed) return;
+    this.collapsed = false;
+    this.writeCollapsedState(this.deviceId, false);
+    this.setMenu("master", false);
+    this.setMenu("info", false);
+    this.dismissPower();
+    this.showTab(tab, true);
+    this.applyCollapsedState();
+  }
+
+  private applyCollapsedState(): void {
+    const card = this.shadowRoot?.querySelector("ha-card");
+    if (card instanceof HTMLElement) {
+      card.classList.toggle("is-collapsed", this.collapsed);
+      card.dataset.collapsed = this.collapsed ? "true" : "false";
+    }
+    const panels = this.piece("panels");
+    if (panels) panels.hidden = this.collapsed;
+    const tabs = this.shadowRoot?.querySelectorAll(".tabs button.tab");
+    if (tabs) {
+      for (const button of tabs) {
+        if (button instanceof HTMLElement) button.hidden = this.collapsed;
+      }
+    }
+    const minis = this.shadowRoot?.querySelectorAll(".tabs .mini-tile");
+    if (minis) {
+      for (const tile of minis) {
+        if (tile instanceof HTMLElement) tile.hidden = !this.collapsed;
+      }
+    }
+    const ask = this.piece("ask");
+    if (ask) ask.hidden = this.collapsed && !this.askOpen;
+  }
+
+  private readCollapsedState(deviceId: string | undefined): boolean {
+    if (!deviceId) return false;
+    try {
+      return window.localStorage.getItem(`kiosk-satellite-card:collapsed:${deviceId}`) === "1";
+    } catch {
+      return false;
+    }
+  }
+
+  private writeCollapsedState(deviceId: string | undefined, collapsed: boolean): void {
+    if (!deviceId) return;
+    try {
+      const key = `kiosk-satellite-card:collapsed:${deviceId}`;
+      if (collapsed) window.localStorage.setItem(key, "1");
+      else window.localStorage.removeItem(key);
+    } catch {
+      // Ignore storage errors on restricted browsers.
+    }
+  }
+
+  private readAskOpenState(deviceId: string | undefined): boolean {
+    if (!deviceId) return false;
+    try {
+      return window.localStorage.getItem(`kiosk-satellite-card:ask-open:${deviceId}`) === "1";
+    } catch {
+      return false;
+    }
+  }
+
+  private writeAskOpenState(deviceId: string | undefined, open: boolean): void {
+    if (!deviceId) return;
+    try {
+      const key = `kiosk-satellite-card:ask-open:${deviceId}`;
+      if (open) window.localStorage.setItem(key, "1");
+      else window.localStorage.removeItem(key);
+    } catch {
+      // Ignore storage errors on restricted browsers.
+    }
   }
 
   private loadSavedTab(): void {

@@ -6,6 +6,8 @@ import {
   alarmListFromPayload,
   buildRedisplayAlarms,
   formatAlarmStamp,
+  formatAlarmTime,
+  parseAlarmInputTime,
   redisplayAlarmServiceCall,
   redisplayAlarmsCss,
   renderRedisplayAlarms,
@@ -143,7 +145,7 @@ describe("buildRedisplayAlarms", () => {
     assert.equal(view?.error, "offline");
     assert.equal(view?.items.length, 1);
     assert.equal(view?.items[0]?.summary, "06:30 Wake");
-    assert.equal(view?.items[0]?.detail, "mon, fri \u00b7 On");
+    assert.equal(view?.items[0]?.detail, "mon, fri");
     assert.equal(view?.items[0]?.action, "turn_off");
     assert.equal(view?.items[0]?.next, false);
 
@@ -160,15 +162,15 @@ describe("buildRedisplayAlarms", () => {
       alarms: [{ time: "22:00", label: "", days, enabled: false }, { time: "", label: "Nap", days: [], enabled: true }],
     });
     assert.equal(view?.items[0]?.summary, "22:00");
-    assert.equal(view?.items[0]?.detail, "sat \u00b7 Off");
+    assert.equal(view?.items[0]?.detail, "sat");
     assert.equal(view?.items[0]?.action, "turn_on");
     assert.equal(view?.items[1]?.summary, "Nap");
-    assert.equal(view?.items[1]?.detail, "On");
+    assert.equal(view?.items[1]?.detail, "");
     view?.items[0]?.days.push("sun");
     assert.deepEqual(days, ["sat"]);
   });
 
-  it("lists every alarm with the next one first", () => {
+  it("sorts alarms chronologically without next emphasis", () => {
     const alarmAt = "2026-11-14T13:30:00";
     const date = new Date(alarmAt);
     const time = `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
@@ -184,18 +186,20 @@ describe("buildRedisplayAlarms", () => {
       }),
       {
         alarms: [
-          { time, label: "Other day", days: [other], enabled: true },
+          { time: "18:00", label: "Evening", days: [other], enabled: true },
           { time: "07:00", label: "Early", days: [], enabled: false },
           { time: "1:30 PM", label: "Match", days: [weekday], enabled: true },
+          { time, label: "Dup", days: [], enabled: true },
         ],
       },
     );
     assert.deepEqual(
       view?.items.map((item) => [item.label, item.next]),
       [
-        ["Match", true],
-        ["Other day", false],
         ["Early", false],
+        ["Match", false],
+        ["Dup", false],
+        ["Evening", false],
       ],
     );
   });
@@ -221,7 +225,7 @@ describe("buildRedisplayAlarms", () => {
     assert.equal(view.items.length, 1);
     assert.equal(view.items[0]?.enabled, false);
     assert.equal(view.items[0]?.summary, "10:00 Hermes Alarm");
-    assert.equal(view.items[0]?.detail, "Off");
+    assert.equal(view.items[0]?.detail, "");
     assert.equal(view.items[0]?.action, "turn_on");
     assert.equal(view.items[0]?.next, false);
     const parent = host();
@@ -229,9 +233,11 @@ describe("buildRedisplayAlarms", () => {
     const row = parent.querySelector(".rd-alarms-item-off");
     assert.ok(row);
     assert.equal(row.classList.contains("rd-alarms-item"), true);
-    assert.equal(parent.querySelector(".rd-alarms-meta")?.textContent, "Off");
-    assert.equal(parent.querySelector('[data-rd-alarms="toggle"]')?.textContent, "Turn on");
-    assert.equal(parent.querySelector('[data-rd-alarms="clock"]')?.textContent, "None");
+    assert.equal(parent.querySelector(".rd-alarms-meta"), null);
+    const toggle = parent.querySelector('[data-rd-alarms="toggle"]');
+    assert.equal(toggle?.getAttribute("aria-label"), "Turn on");
+    assert.equal(toggle?.getAttribute("aria-pressed"), "false");
+    assert.equal(parent.querySelector('[data-rd-alarms="next"]')?.hidden, true);
   });
 
   it("shows a next-alarm timestamp when the script list has no alarm at that time", () => {
@@ -252,7 +258,7 @@ describe("buildRedisplayAlarms", () => {
     assert.equal(missing?.items[0]?.label, "");
     assert.deepEqual(missing?.items[0]?.days, []);
     assert.equal(missing?.items[0]?.enabled, true);
-    assert.equal(missing?.items[0]?.next, true);
+    assert.equal(missing?.items[0]?.next, false);
 
     const listed = buildRedisplayAlarms(
       satellite({
@@ -265,7 +271,7 @@ describe("buildRedisplayAlarms", () => {
     );
     assert.equal(listed?.items.length, 1);
     assert.equal(listed?.items[0]?.label, "Hermes Alarm");
-    assert.equal(listed?.items[0]?.next, true);
+    assert.equal(listed?.items[0]?.next, false);
   });
 });
 
@@ -319,6 +325,38 @@ describe("alarm list payload", () => {
     assert.equal(alarmListFromFailure({ message: "denied" }).error, "denied");
     assert.equal(alarmListFromFailure("boom").error, "boom");
     assert.deepEqual(alarmListFromPayload({ ok: true, alarms: [] }, previous).alarms, []);
+  });
+
+  it("updates the list from a singular alarm response on turn_on, turn_off, set, and delete", () => {
+    const start = {
+      alarms: [{ time: "10:00", label: "Hermes Alarm", days: [], enabled: false }],
+    };
+    const turnedOn = alarmListFromPayload(
+      { response: { ok: true, result: "turned_on", alarm: { time: "10:00", label: "Hermes Alarm", days: "once", on: true } } },
+      start,
+    );
+    assert.deepEqual(turnedOn.alarms, [{ time: "10:00", label: "Hermes Alarm", days: [], enabled: true }]);
+
+    const turnedOff = alarmListFromPayload(
+      { response: { ok: true, result: "turned_off", alarm: { time: "10:00", label: "Hermes Alarm", days: "once", on: false } } },
+      turnedOn,
+    );
+    assert.deepEqual(turnedOff.alarms, [{ time: "10:00", label: "Hermes Alarm", days: [], enabled: false }]);
+
+    const added = alarmListFromPayload(
+      { response: { ok: true, result: "set", alarm: { time: "07:00", label: "Gym", days: ["mon"], on: true } } },
+      turnedOff,
+    );
+    assert.deepEqual(added.alarms, [
+      { time: "10:00", label: "Hermes Alarm", days: [], enabled: false },
+      { time: "07:00", label: "Gym", days: ["mon"], enabled: true },
+    ]);
+
+    const deleted = alarmListFromPayload(
+      { response: { ok: true, result: "deleted", alarm: { time: "07:00", label: "Gym", days: ["mon"], on: false } } },
+      added,
+    );
+    assert.deepEqual(deleted.alarms, [{ time: "10:00", label: "Hermes Alarm", days: [], enabled: false }]);
   });
 });
 
@@ -407,6 +445,10 @@ class FakeElement {
 
   setAttribute(name: string, value: string): void {
     this.attributes.set(name, value);
+  }
+
+  getAttribute(name: string): string | null {
+    return this.attributes.get(name) ?? null;
   }
 
   append(...nodes: FakeElement[]): void {
@@ -569,7 +611,8 @@ describe("renderRedisplayAlarms", () => {
     const dialog = parent.querySelector('[data-rd-alarms="dialog"]');
     const listed = parent.querySelector('[data-rd-alarms="items"]');
     assert.equal(dialog?.hidden, true);
-    assert.equal(listed?.children[listed.children.length - 1]?.textContent, "Add");
+    assert.equal(listed?.children.length, 1);
+    assert.equal(parent.querySelector(".rd-alarms-head")?.querySelector('[data-rd-alarms="add"]')?.getAttribute("aria-label"), "Add alarm");
     parent.querySelector('[data-rd-alarms="add"]')?.click();
     assert.equal(dialog?.hidden, false);
 
@@ -593,9 +636,12 @@ describe("renderRedisplayAlarms", () => {
 
     const toggles = parent.querySelectorAll('[data-rd-alarms="toggle"]');
     const deletes = parent.querySelectorAll('[data-rd-alarms="delete"]');
-    assert.equal(toggles[0]?.textContent, "Turn on");
-    assert.equal(toggles[1]?.textContent, "Turn off");
-    assert.equal(deletes[0]?.className.includes("rd-alarms-button-danger"), true);
+    assert.equal(toggles[0]?.getAttribute("aria-label"), "Turn on");
+    assert.equal(toggles[0]?.getAttribute("aria-pressed"), "false");
+    assert.equal(toggles[1]?.getAttribute("aria-label"), "Turn off");
+    assert.equal(toggles[1]?.getAttribute("aria-pressed"), "true");
+    assert.equal(deletes[0]?.getAttribute("aria-label"), "Delete");
+    assert.equal(deletes[0]?.className.includes("rd-alarms-icon-button-danger"), true);
     toggles[0]?.click();
     deletes[1]?.click();
     paint(parent, view, seen.callbacks);
@@ -608,7 +654,7 @@ describe("renderRedisplayAlarms", () => {
     ]);
   });
 
-  it("emphasizes the next alarm and keeps Add at the end of the list", () => {
+  it("renders alarms chronologically without next emphasis on rows", () => {
     const alarmAt = "2026-11-14T13:30:00";
     const date = new Date(alarmAt);
     const time = `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
@@ -622,20 +668,80 @@ describe("renderRedisplayAlarms", () => {
       }),
       {
         alarms: [
-          wake({ time: "07:00", label: "Early" }),
           wake({ time, label: "Soon", days: [] }),
+          wake({ time: "07:00", label: "Early" }),
         ],
       },
     );
     assert.ok(view);
-    assert.equal(view.items[0]?.next, true);
+    assert.equal(view.items[0]?.label, "Early");
+    assert.equal(view.items[0]?.next, false);
     const parent = host();
     paint(parent, view, recorded().callbacks);
     assert.equal(parent.querySelector('[data-rd-alarms="next"]')?.hidden, true);
-    const emphasized = parent.querySelector(".rd-alarms-item-next");
-    assert.equal(emphasized?.querySelector(".rd-alarms-kicker")?.textContent, "Next");
-    assert.equal(emphasized?.querySelector(".rd-alarms-item-time")?.textContent, formatAlarmStamp(alarmAt));
+    assert.equal(parent.querySelector(".rd-alarms-item-next"), null);
     assert.equal(parent.querySelectorAll(".rd-alarms-item").length, 2);
+    assert.equal(parent.querySelectorAll(".rd-alarms-item-time")[0]?.textContent, "07:00");
+    assert.equal(parent.querySelectorAll(".rd-alarms-item-time")[1]?.textContent, time);
+  });
+
+  it("updates an off alarm to enabled with a Turn off button and updated Next alarm clock", () => {
+    const firstAt = "2026-11-17T10:00:00";
+    const secondAt = "2026-11-18T10:00:00";
+    const listedOff = alarmListFromPayload({
+      ok: true,
+      alarms: [{ time: "10:00", label: "Hermes Alarm", days: "once", on: false }],
+    });
+    const offView = buildRedisplayAlarms(
+      satellite({
+        ...quiet,
+        scriptAvailable: true,
+        kioskName: "Updoot2",
+        nextAlarmId: "sensor.updoot2_next_alarm",
+        nextAlarm: "unknown",
+      }),
+      listedOff,
+    );
+    assert.ok(offView);
+    const parent = host();
+    const seen = recorded();
+    paint(parent, offView, seen.callbacks);
+    assert.equal(parent.querySelector('[data-rd-alarms="next"]')?.hidden, true);
+    assert.equal(parent.querySelector('[data-rd-alarms="toggle"]')?.getAttribute("aria-label"), "Turn on");
+
+    const listedOn = alarmListFromPayload(
+      { ok: true, result: "turned_on", alarm: { time: "10:00", label: "Hermes Alarm", days: "once", on: true } },
+      listedOff,
+    );
+    const nextView = buildRedisplayAlarms(
+      satellite({
+        ...quiet,
+        scriptAvailable: true,
+        kioskName: "Updoot2",
+        nextAlarmId: "sensor.updoot2_next_alarm",
+        nextAlarm: firstAt,
+      }),
+      listedOn,
+    );
+    assert.ok(nextView);
+    paint(parent, nextView, seen.callbacks);
+    assert.equal(parent.querySelector('[data-rd-alarms="clock"]')?.textContent, formatAlarmStamp(firstAt));
+    assert.equal(parent.querySelector(".rd-alarms-item-time")?.textContent, "10:00");
+    assert.equal(parent.querySelector('[data-rd-alarms="toggle"]')?.getAttribute("aria-label"), "Turn off");
+
+    const laterView = buildRedisplayAlarms(
+      satellite({
+        ...quiet,
+        scriptAvailable: true,
+        kioskName: "Updoot2",
+        nextAlarmId: "sensor.updoot2_next_alarm",
+        nextAlarm: secondAt,
+      }),
+      listedOn,
+    );
+    assert.ok(laterView);
+    paint(parent, laterView, seen.callbacks);
+    assert.equal(parent.querySelector('[data-rd-alarms="clock"]')?.textContent, formatAlarmStamp(secondAt));
   });
 
   it("repaints the clock, banner, and error without clearing the form", () => {
@@ -698,5 +804,76 @@ describe("renderRedisplayAlarms", () => {
     assert.equal(parent.querySelector('[data-rd-alarms="banner"]')?.hidden, true);
     assert.equal(parent.querySelector('[data-rd-alarms="error"]')?.hidden, true);
     assert.equal(parent.querySelector('[data-rd-alarms="snoozed"]')?.hidden, true);
+  });
+
+  it("formats alarm times as 12-hour am/pm or 24-hour from the HA locale setting", () => {
+    const t12 = formatAlarmTime("19:30", { language: "en", time_format: "12" });
+    assert.match(t12, /7:30\s*PM/i);
+    const t24 = formatAlarmTime("7:30 PM", { language: "en", time_format: "24" });
+    assert.equal(t24, "19:30");
+    const midnight24 = formatAlarmTime("12:05 AM", { language: "en", time_format: "24" });
+    assert.equal(midnight24, "00:05");
+
+    const model = satellite({
+      ringing: false,
+      scriptAvailable: true,
+      kioskName: "Dot",
+      nextAlarmId: "sensor.next_alarm",
+      nextAlarm: "2026-11-16T19:30:00",
+    });
+    const view12 = buildRedisplayAlarms(
+      model,
+      { alarms: [{ time: "19:30", label: "Dinner", days: [], enabled: true }] },
+      { language: "en", time_format: "12" },
+    );
+    assert.match(view12?.nextAlarm ?? "", /7:30\s*PM/i);
+    assert.match(view12?.items[0]?.displayTime ?? "", /7:30\s*PM/i);
+    assert.equal(view12?.items[0]?.time, "19:30");
+
+    const view24 = buildRedisplayAlarms(
+      model,
+      { alarms: [{ time: "7:30 PM", label: "Dinner", days: [], enabled: true }] },
+      { language: "en", time_format: "24" },
+    );
+    assert.ok(view24?.nextAlarm?.startsWith("19:30"));
+    assert.equal(view24?.items[0]?.displayTime, "19:30");
+    assert.equal(view24?.items[0]?.time, "7:30 PM");
+  });
+
+  it("uses a text input for alarm time to avoid native picker crashes and parses 12h/24h input", () => {
+    assert.equal(parseAlarmInputTime("7:05"), "07:05");
+    assert.equal(parseAlarmInputTime("06:30:00"), "06:30");
+    assert.equal(parseAlarmInputTime("7:30 pm"), "19:30");
+    assert.equal(parseAlarmInputTime("12:00 am"), "00:00");
+    assert.equal(parseAlarmInputTime("12:00 pm"), "12:00");
+    assert.equal(parseAlarmInputTime("7am"), "07:00");
+    assert.equal(parseAlarmInputTime("25:00"), undefined);
+    assert.equal(parseAlarmInputTime("13:00 pm"), undefined);
+    assert.equal(parseAlarmInputTime("07:60"), undefined);
+    assert.equal(parseAlarmInputTime("nope"), undefined);
+
+    const view = buildRedisplayAlarms(satellite({ ...quiet, scriptAvailable: true, kioskName: "Updoot1" }), { alarms: [] });
+    assert.ok(view);
+    const parent = host();
+    const seen = recorded();
+    paint(parent, view, seen.callbacks);
+    parent.querySelector('[data-rd-alarms="add"]')?.click();
+    const dialog = parent.querySelector('[data-rd-alarms="dialog"]');
+    const time = parent.querySelector('[data-rd-alarms="time"]');
+    assert.equal(time?.type, "text");
+    assert.ok(time);
+    time.value = "not a time";
+    parent.querySelector('[data-rd-alarms="set"]')?.click();
+    assert.equal(dialog?.hidden, false);
+    assert.equal(seen.errors.at(-1), "Enter time as HH:MM (e.g. 07:00 or 7:00 PM)");
+    assert.equal(seen.scripts.length, 1);
+
+    time.value = "7:30 pm";
+    parent.querySelector('[data-rd-alarms="set"]')?.click();
+    assert.equal(dialog?.hidden, true);
+    assert.deepEqual(seen.scripts.at(-1), {
+      action: "set",
+      extra: { time: "19:30", label: "", days: [] },
+    });
   });
 });

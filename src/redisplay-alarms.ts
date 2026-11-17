@@ -1,4 +1,13 @@
 import { alarmServiceCall, type SatelliteModel } from "./model";
+import { formatDateClock, svgIcon, type TimeLocale } from "./redisplay";
+
+const ICON_ADD = "M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z";
+const ICON_BELL_ON =
+  "M12 22a2 2 0 0 0 2-2h-4a2 2 0 0 0 2 2zm6-6V11a6 6 0 0 0-5-5.91V4a1 1 0 1 0-2 0v1.09A6 6 0 0 0 6 11v5l-2 2v1h16v-1l-2-2z";
+const ICON_BELL_OFF =
+  "M20 18.69 7.84 6.14 5.27 3.49 4 4.76l2.8 2.8v.01c-.52.99-.8 2.16-.8 3.42v5l-2 2v1h13.73l2 2L21 19.72l-1-1.03zM12 22a2 2 0 0 0 2-2h-4a2 2 0 0 0 2 2zm6-7.32V11c0-3.08-1.64-5.64-4.5-6.32V4a1.5 1.5 0 0 0-3 0v.68c-.15.03-.29.08-.42.12-.1.03-.2.07-.3.11h-.01c-.01 0-.01 0-.02.01-.23.09-.46.2-.68.31 0 0-.01 0-.01.01L18 14.68z";
+const ICON_DELETE =
+  "M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z";
 
 export type AlarmScriptAction = "list" | "set" | "turn_on" | "turn_off" | "delete";
 
@@ -24,15 +33,17 @@ export interface RedisplayAlarmList {
 
 export interface RedisplayAlarmItem {
   time: string;
+  /** Formatted time for display (respects HA time_format when provided). */
+  displayTime?: string;
   label: string;
   days: string[];
   enabled: boolean;
   /** Time and label, the same line the control card shows. */
   summary: string;
-  /** Weekdays and On/Off. */
+  /** Weekdays, when repeating. */
   detail: string;
   action: "turn_on" | "turn_off";
-  /** True for the alarm that matches the next-alarm sensor. That row is first. */
+  /** Always false; rows are sorted chronologically without next emphasis. */
   next: boolean;
 }
 
@@ -87,6 +98,19 @@ export const redisplayAlarmsCss = `
   border-top: 1px solid var(--divider-color, rgba(127, 127, 127, 0.35));
   color: var(--primary-text-color);
 }
+.rd-alarms-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 32px;
+}
+.rd-alarms-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
 .rd-alarms-heading {
   margin: 0;
   font-size: 0.85rem;
@@ -133,8 +157,10 @@ export const redisplayAlarmsCss = `
 }
 .rd-alarms-actions {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 6px;
+  flex: 0 0 auto;
 }
 .rd-alarms-button {
   border: none;
@@ -153,48 +179,66 @@ export const redisplayAlarmsCss = `
 .rd-alarms-button-danger {
   color: var(--error-color, #ba1a1a);
 }
+.rd-alarms-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--primary-text-color) 8%, transparent);
+  color: var(--secondary-text-color);
+  cursor: pointer;
+}
+.rd-alarms-icon-button svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+.rd-alarms-icon-button-active {
+  color: var(--primary-color);
+  background: color-mix(in srgb, var(--primary-color) 14%, transparent);
+}
+.rd-alarms-icon-button-danger {
+  color: var(--error-color, #ba1a1a);
+}
 .rd-alarms-list {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
 }
 .rd-alarms-rows {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 10px;
 }
 .rd-alarms-rows:empty {
   display: none;
 }
 .rd-alarms-item {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
 }
-.rd-alarms-item-next .rd-alarms-item-time {
-  font-size: 1.6rem;
+.rd-alarms-item-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.rd-alarms-item-primary {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 .rd-alarms-item-off .rd-alarms-item-time,
 .rd-alarms-item-off .rd-alarms-item-label {
   color: var(--secondary-text-color);
-}
-.rd-alarms-add {
-  display: flex;
-  align-items: center;
-  width: 100%;
-  min-height: 52px;
-  margin: 0;
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: var(--secondary-text-color);
-  font: inherit;
-  font-size: 1.35rem;
-  font-weight: 500;
-  line-height: 1.15;
-  text-align: left;
-  cursor: pointer;
 }
 .rd-alarms-dialog {
   display: block;
@@ -277,6 +321,7 @@ const callbacksFor = new WeakMap<HTMLElement, RedisplayAlarmsCallbacks>();
 export function buildRedisplayAlarms(
   model: SatelliteModel,
   list?: RedisplayAlarmList,
+  locale?: TimeLocale,
 ): RedisplayAlarmsView | undefined {
   const alarms = model.alarms;
   const hasSensors = Boolean(
@@ -291,11 +336,11 @@ export function buildRedisplayAlarms(
     ringingControls: Boolean(alarms.ringingId || alarms.snoozeId || alarms.stopId),
     script,
     items: script
-      ? withSensorAlarm(orderAlarms(list?.alarms ?? [], alarms.nextAlarmId ? alarms.nextAlarm : undefined), alarms.nextAlarmId ? alarms.nextAlarm : undefined)
+      ? withSensorAlarm(orderAlarms(list?.alarms ?? [], locale), alarms.nextAlarmId ? alarms.nextAlarm : undefined, locale)
       : [],
   };
-  if (alarms.nextAlarmId) view.nextAlarm = nextAlarmText(alarms.nextAlarm);
-  const snoozed = alarms.snoozedUntilId ? formatAlarmStamp(alarms.snoozedUntil) : undefined;
+  if (alarms.nextAlarmId) view.nextAlarm = nextAlarmText(alarms.nextAlarm, locale);
+  const snoozed = alarms.snoozedUntilId ? formatAlarmStamp(alarms.snoozedUntil, locale) : undefined;
   if (snoozed) view.snoozedUntil = snoozed;
   if (alarms.snoozeId) view.snoozeId = alarms.snoozeId;
   if (alarms.stopId) view.stopId = alarms.stopId;
@@ -304,13 +349,22 @@ export function buildRedisplayAlarms(
 }
 
 /** Clock and short date for an ISO alarm timestamp. Other states are undefined. */
-export function formatAlarmStamp(state: string | undefined): string | undefined {
+export function formatAlarmStamp(state: string | undefined, locale?: TimeLocale): string | undefined {
   if (!state || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(state)) return undefined;
   const date = new Date(state);
   if (Number.isNaN(date.getTime())) return undefined;
-  const time = date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-  const day = date.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+  const time = formatDateClock(date, locale);
+  const day = date.toLocaleDateString(locale?.language || undefined, { weekday: "short", month: "short", day: "numeric" });
   return `${time} \u00b7 ${day}`;
+}
+
+/** Format a clock string like "07:00" or "19:30" according to the HA locale time_format. */
+export function formatAlarmTime(time: string, locale?: TimeLocale): string {
+  if (!locale || !time) return time;
+  const minutes = clockMinutes(time);
+  if (minutes === undefined) return time;
+  const date = new Date(2026, 0, 1, Math.floor(minutes / 60), minutes % 60, 0, 0);
+  return formatDateClock(date, locale);
 }
 
 /**
@@ -328,7 +382,14 @@ export function alarmListFromPayload(result: unknown, previous?: RedisplayAlarmL
   }
   if (record) {
     const alarms = parseAlarmList(record);
-    if (alarms) next.alarms = alarms;
+    if (alarms) {
+      next.alarms = alarms;
+    } else {
+      const single = parseAlarm(record.alarm);
+      if (single && record.ok !== false) {
+        next.alarms = applySingleAlarm(previous?.alarms ?? [], single, record.result);
+      }
+    }
   }
   return next;
 }
@@ -392,15 +453,22 @@ function loadAlarmList(root: HTMLElement, view: RedisplayAlarmsView, callbacks: 
 function createSection(parent: HTMLElement, view: RedisplayAlarmsView): HTMLElement {
   const root = el("section", "rd-alarms");
   mark(root, "root");
+  const head = el("div", "rd-alarms-head");
   const heading = el("h3", "rd-alarms-heading");
   heading.textContent = "Alarms";
-  root.append(heading);
+  head.append(heading);
+  const dialog = view.script ? addDialog(parent, root) : undefined;
+  if (dialog) {
+    const headActions = el("div", "rd-alarms-head-actions");
+    headActions.append(addButton(dialog));
+    head.append(headActions);
+  }
+  root.append(head);
   if (view.ringingControls) root.append(ringingBanner(parent, view));
   if (view.nextAlarm !== undefined) root.append(nextBlock());
   root.append(snoozedLine());
-  if (view.script) {
-    const dialog = addDialog(parent, root);
-    root.append(alarmList(dialog), dialog, errorLine());
+  if (dialog) {
+    root.append(alarmList(), dialog, errorLine());
   }
   return root;
 }
@@ -442,22 +510,18 @@ function snoozedLine(): HTMLElement {
   return line;
 }
 
-function alarmList(dialog: HTMLElement): HTMLElement {
+function alarmList(): HTMLElement {
   const list = el("div", "rd-alarms-list");
   mark(list, "items");
   const rows = el("div", "rd-alarms-rows");
   mark(rows, "rows");
-  list.append(rows, addButton(dialog));
+  list.append(rows);
   return list;
 }
 
 function addButton(dialog: HTMLElement): HTMLButtonElement {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "rd-alarms-add";
-  button.textContent = "Add";
-  mark(button, "add");
-  button.addEventListener("click", () => openDialog(dialog));
+  const button = iconButton("Add alarm", "add", ICON_ADD, () => openDialog(dialog));
+  button.className += " rd-alarms-add";
   return button;
 }
 
@@ -477,7 +541,14 @@ function addDialog(parent: HTMLElement, section: HTMLElement): HTMLElement {
     actionButton("Set", "set", () => submitAlarm(parent, section, dialog), "primary"),
     actionButton("Close", "close", () => closeDialog(dialog)),
   );
-  body.append(title, labeledInput("Time", "time", "time"), labeledInput("Label", "label", "text"), dayRow(), error, actions);
+  body.append(
+    title,
+    labeledInput("Time", "time", "text", "07:00"),
+    labeledInput("Label", "label", "text"),
+    dayRow(),
+    error,
+    actions,
+  );
   dialog.append(body);
   return dialog;
 }
@@ -489,13 +560,17 @@ function errorLine(): HTMLElement {
   return error;
 }
 
-function labeledInput(caption: string, name: string, type: string): HTMLElement {
+function labeledInput(caption: string, name: string, type: string, placeholder?: string): HTMLElement {
   const label = el("label", "rd-alarms-field");
   const text = el("span", "rd-alarms-field-label");
   text.textContent = caption;
   const input = document.createElement("input");
   input.type = type;
   input.className = "rd-alarms-input";
+  if (placeholder) {
+    input.placeholder = placeholder;
+    input.autocomplete = "off";
+  }
   mark(input, name);
   label.append(text, input);
   return label;
@@ -521,12 +596,20 @@ function dayRow(): HTMLElement {
 function submitAlarm(parent: HTMLElement, section: HTMLElement, dialog: HTMLElement): void {
   const callbacks = callbacksFor.get(parent);
   if (!callbacks) return;
-  const entry = readForm(dialog);
-  if (!entry.time) {
+  const rawTime = valueOf(dialog.querySelector(slot("time"))).trim();
+  if (!rawTime) {
     callbacks.onError("Time is required");
     paintError(section, "Time is required");
     return;
   }
+  const time = parseAlarmInputTime(rawTime);
+  if (!time) {
+    const message = "Enter time as HH:MM (e.g. 07:00 or 7:00 PM)";
+    callbacks.onError(message);
+    paintError(section, message);
+    return;
+  }
+  const entry = readForm(dialog, time);
   callbacks.onScript("set", entry);
   clearForm(dialog);
   closeDialog(dialog);
@@ -557,7 +640,7 @@ function paintSection(parent: HTMLElement, root: HTMLElement, view: RedisplayAla
     clock.classList.toggle("rd-alarms-clock-empty", view.nextAlarm === "None");
   }
   const next = root.querySelector(slot("next"));
-  if (next) hide(next, view.items.some((item) => item.next));
+  if (next) hide(next, view.items.length > 0);
   const snoozed = root.querySelector(slot("snoozed"));
   if (snoozed) {
     snoozed.textContent = view.snoozedUntil ? `Snoozed until ${view.snoozedUntil}` : "";
@@ -576,8 +659,7 @@ function paintList(parent: HTMLElement, root: HTMLElement, view: RedisplayAlarms
   const key = JSON.stringify(view.items);
   if (holder.dataset.rdAlarmsItems !== key) {
     holder.dataset.rdAlarmsItems = key;
-    const headline = view.nextAlarm && view.nextAlarm !== "None" ? view.nextAlarm : undefined;
-    holder.replaceChildren(...view.items.map((item) => itemRow(parent, item, item.next ? headline : undefined)));
+    holder.replaceChildren(...view.items.map((item) => itemRow(parent, item)));
   }
 }
 
@@ -590,41 +672,89 @@ function paintError(root: HTMLElement, error: string | undefined): void {
   }
 }
 
-function itemRow(parent: HTMLElement, item: RedisplayAlarmItem, headline?: string): HTMLElement {
+function itemRow(parent: HTMLElement, item: RedisplayAlarmItem): HTMLElement {
   const classes = ["rd-alarms-item"];
-  if (item.next) classes.push("rd-alarms-item-next");
   if (!item.enabled) classes.push("rd-alarms-item-off");
   const row = el("div", classes.join(" "));
-  if (item.next) {
-    const kicker = el("p", "rd-alarms-kicker");
-    kicker.textContent = "Next";
-    row.append(kicker);
-  }
-  const time = el("p", "rd-alarms-item-time");
-  time.textContent = headline || item.time || item.label;
-  row.append(time);
+  const main = el("div", "rd-alarms-item-main");
+  const primary = el("div", "rd-alarms-item-primary");
+  const time = el("span", "rd-alarms-item-time");
+  time.textContent = (item.displayTime ?? item.time) || item.label;
+  primary.append(time);
   if (item.time && item.label) {
-    const label = el("p", "rd-alarms-item-label");
+    const label = el("span", "rd-alarms-item-label");
     label.textContent = item.label;
-    row.append(label);
+    primary.append(label);
   }
-  const meta = el("p", "rd-alarms-meta");
-  meta.textContent = item.detail;
+  main.append(primary);
+  if (item.detail) {
+    const meta = el("p", "rd-alarms-meta");
+    meta.textContent = item.detail;
+    main.append(meta);
+  }
+
   const extra: AlarmScriptExtra = { time: item.time, label: item.label, days: item.days.slice() };
   const actions = el("div", "rd-alarms-actions");
-  actions.append(
-    actionButton(item.enabled ? "Turn off" : "Turn on", "toggle", () => {
-      callbacksFor.get(parent)?.onScript(item.action, extra);
-    }),
-    actionButton("Delete", "delete", () => callbacksFor.get(parent)?.onScript("delete", extra), "danger"),
+  const toggleLabel = item.enabled ? "Turn off" : "Turn on";
+  const toggle = iconButton(
+    toggleLabel,
+    "toggle",
+    item.enabled ? ICON_BELL_ON : ICON_BELL_OFF,
+    () => callbacksFor.get(parent)?.onScript(item.action, extra),
+    item.enabled ? "active" : undefined,
   );
-  row.append(meta, actions);
+  toggle.setAttribute("aria-pressed", item.enabled ? "true" : "false");
+  actions.append(
+    toggle,
+    iconButton("Delete", "delete", ICON_DELETE, () => callbacksFor.get(parent)?.onScript("delete", extra), "danger"),
+  );
+  row.append(main, actions);
   return row;
 }
 
-function readForm(root: HTMLElement): AlarmScriptExtra {
-  let time = valueOf(root.querySelector(slot("time")));
-  if (time.length > 5) time = time.slice(0, 5);
+function iconButton(
+  caption: string,
+  name: string,
+  iconPath: string,
+  onClick: () => void,
+  variant?: "active" | "danger",
+): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "rd-alarms-icon-button";
+  if (variant === "active") button.className += " rd-alarms-icon-button-active";
+  if (variant === "danger") button.className += " rd-alarms-icon-button-danger";
+  button.setAttribute("aria-label", caption);
+  button.setAttribute("title", caption);
+  mark(button, name);
+  button.append(svgIcon(iconPath));
+  button.addEventListener("click", onClick);
+  return button;
+}
+
+/** Parse user-entered alarm time (e.g. "07:00", "7:00 PM", "7pm", "06:30:00") into 24h "HH:MM". */
+export function parseAlarmInputTime(raw: string): string | undefined {
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  const colonMatch = /^(\d{1,2}):(\d{2})(?::\d{2})?(?:\s*(am|pm))?$/i.exec(trimmed);
+  const shortMatch = colonMatch ? null : /^(\d{1,2})\s*(am|pm)$/i.exec(trimmed);
+  const match = colonMatch ?? shortMatch;
+  if (!match) return undefined;
+  let hours = Number(match[1]);
+  const minutes = colonMatch ? Number(match[2]) : 0;
+  const meridiem = (colonMatch ? match[3] : match[2])?.toLowerCase();
+  if (minutes > 59) return undefined;
+  if (meridiem) {
+    if (hours < 1 || hours > 12) return undefined;
+    if (meridiem === "pm" && hours < 12) hours += 12;
+    if (meridiem === "am" && hours === 12) hours = 0;
+  } else if (hours > 23) {
+    return undefined;
+  }
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+function readForm(root: HTMLElement, time: string): AlarmScriptExtra {
   const label = valueOf(root.querySelector(slot("label"))).trim();
   const days: string[] = [];
   for (const box of root.querySelectorAll("[data-rd-alarms-day]")) {
@@ -650,71 +780,64 @@ function actionButton(
   return button;
 }
 
-function nextAlarmText(state: string | undefined): string {
+function nextAlarmText(state: string | undefined, locale?: TimeLocale): string {
   if (!state || state === "unknown" || state === "unavailable") return "None";
-  return formatAlarmStamp(state) ?? state;
+  return formatAlarmStamp(state, locale) ?? state;
 }
 
-function presentAlarm(alarm: RedisplayAlarmEntry): RedisplayAlarmItem {
+function presentAlarm(alarm: RedisplayAlarmEntry, locale?: TimeLocale): RedisplayAlarmItem {
   const time = typeof alarm.time === "string" ? alarm.time : "";
+  const displayTime = formatAlarmTime(time, locale);
   const label = typeof alarm.label === "string" ? alarm.label : "";
   const days = Array.isArray(alarm.days) ? alarm.days.filter((day) => typeof day === "string" && day.length > 0) : [];
   const enabled = alarm.enabled !== false;
   return {
     time,
+    displayTime,
     label,
     days,
     enabled,
-    summary: [time, label].filter(Boolean).join(" "),
-    detail: [days.join(", "), enabled ? "On" : "Off"].filter(Boolean).join(" \u00b7 "),
+    summary: [displayTime, label].filter(Boolean).join(" "),
+    detail: days.join(", "),
     action: enabled ? "turn_off" : "turn_on",
     next: false,
   };
 }
 
-const WEEKDAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
-
 /** The script list is the source of saved alarms. A next-alarm timestamp still belongs in that list when the script omitted it. */
-function withSensorAlarm(items: RedisplayAlarmItem[], nextRaw: string | undefined): RedisplayAlarmItem[] {
+function withSensorAlarm(items: RedisplayAlarmItem[], nextRaw: string | undefined, locale?: TimeLocale): RedisplayAlarmItem[] {
   const target = nextClock(nextRaw);
   if (!target) return items;
-  if (items.some((item) => clockMinutes(item.time) === target.minutes)) return items;
+  if (items.some((item) => item.enabled && clockMinutes(item.time) === target.minutes)) return items;
   const hours = Math.floor(target.minutes / 60);
   const minutes = target.minutes % 60;
   const time = `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
-  const row = presentAlarm({ time, label: "", days: [], enabled: true });
-  return [{ ...row, next: true }, ...items.map((item) => ({ ...item, next: false, days: item.days.slice() }))];
+  const row = presentAlarm({ time, label: "", days: [], enabled: true }, locale);
+  return [...items.map((item) => ({ ...item, days: item.days.slice() })), row]
+    .sort((a, b) => compareAlarmTime(a, b));
 }
 
-function orderAlarms(alarms: readonly RedisplayAlarmEntry[], nextRaw: string | undefined): RedisplayAlarmItem[] {
-  const items = alarms.map((alarm) => presentAlarm(alarm));
-  const index = nextIndex(items, nextRaw);
-  if (index < 0) return items;
-  const chosen = items[index];
-  const next = { ...chosen, next: true, days: chosen.days.slice() };
-  return [next, ...items.slice(0, index), ...items.slice(index + 1)];
+function orderAlarms(alarms: readonly RedisplayAlarmEntry[], locale?: TimeLocale): RedisplayAlarmItem[] {
+  return alarms
+    .map((alarm, index) => ({ item: presentAlarm(alarm, locale), index }))
+    .sort((a, b) => compareAlarmTime(a.item, b.item) || a.index - b.index)
+    .map((entry) => entry.item);
 }
 
-function nextIndex(items: readonly RedisplayAlarmItem[], raw: string | undefined): number {
-  const target = nextClock(raw);
-  if (!target) return -1;
-  const matches = items
-    .map((item, index) => ({ item, index, minutes: clockMinutes(item.time) }))
-    .filter((candidate) => candidate.item.enabled && candidate.minutes === target.minutes);
-  if (matches.length === 0) return -1;
-  const weekday = target.weekday;
-  const byDay = matches.find((candidate) => weekday !== undefined && candidate.item.days.map((day) => day.toLowerCase()).includes(weekday));
-  if (byDay) return byDay.index;
-  const open = matches.find((candidate) => candidate.item.days.length === 0);
-  if (open) return open.index;
-  return matches[0].index;
+function compareAlarmTime(a: RedisplayAlarmItem, b: RedisplayAlarmItem): number {
+  const aMinutes = clockMinutes(a.time);
+  const bMinutes = clockMinutes(b.time);
+  if (aMinutes !== undefined && bMinutes !== undefined) return aMinutes - bMinutes;
+  if (aMinutes !== undefined) return -1;
+  if (bMinutes !== undefined) return 1;
+  return 0;
 }
 
-function nextClock(raw: string | undefined): { minutes: number; weekday?: string } | undefined {
+function nextClock(raw: string | undefined): { minutes: number } | undefined {
   if (!raw || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(raw)) return undefined;
   const date = new Date(raw);
   if (Number.isNaN(date.getTime())) return undefined;
-  return { minutes: date.getHours() * 60 + date.getMinutes(), weekday: WEEKDAYS[date.getDay()] };
+  return { minutes: date.getHours() * 60 + date.getMinutes() };
 }
 
 function clockMinutes(time: string): number | undefined {
@@ -761,6 +884,32 @@ function parseAlarm(value: unknown): RedisplayAlarmEntry | undefined {
   if (typeof record.enabled === "boolean") enabled = record.enabled;
   else if (typeof record.on === "boolean") enabled = record.on;
   return { time, label, days: daysOf(record.days), enabled };
+}
+
+function applySingleAlarm(
+  existing: readonly RedisplayAlarmEntry[],
+  entry: RedisplayAlarmEntry,
+  result: unknown,
+): RedisplayAlarmEntry[] {
+  const index = existing.findIndex((item) => sameAlarmSlot(item, entry));
+  if (result === "deleted") {
+    return index < 0 ? existing.slice() : [...existing.slice(0, index), ...existing.slice(index + 1)];
+  }
+  if (index < 0) return [...existing, entry];
+  return [...existing.slice(0, index), entry, ...existing.slice(index + 1)];
+}
+
+function sameAlarmSlot(a: RedisplayAlarmEntry, b: RedisplayAlarmEntry): boolean {
+  const aMins = clockMinutes(a.time);
+  const bMins = clockMinutes(b.time);
+  if (aMins !== undefined && bMins !== undefined) {
+    if (aMins !== bMins) return false;
+  } else if (a.time !== b.time) {
+    return false;
+  }
+  const aDays = a.days.map((d) => d.toLowerCase()).sort().join(",");
+  const bDays = b.days.map((d) => d.toLowerCase()).sort().join(",");
+  return aDays === bDays;
 }
 
 function daysOf(value: unknown): string[] {

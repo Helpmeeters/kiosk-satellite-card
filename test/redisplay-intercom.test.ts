@@ -231,16 +231,28 @@ describe("buildIntercom", () => {
     assert.equal(view?.buttons.find((button) => button.id === "ring")?.disabled, false);
   });
 
-  it("disables the mode buttons when the answer select is absent", () => {
-    const view = buildIntercom(
+  it("keeps mode buttons enabled when intercom is off and the answer select is absent, and disables them when on without a select", () => {
+    const offView = buildIntercom(
       satellite({
         voiceSwitches: [{ entityId: "switch.enabled", name: "Intercom enabled", on: false }],
       }),
     );
-    assert.equal(view?.answerId, undefined);
-    assert.equal(view?.volume, undefined);
-    assert.deepEqual(buttons(view), [
+    assert.equal(offView?.answerId, undefined);
+    assert.equal(offView?.volume, undefined);
+    assert.deepEqual(buttons(offView), [
       ["off", "Off", true, false, ""],
+      ["ring", "Ring", false, false, ""],
+      ["answer", "Answer", false, false, ""],
+      ["dnd", "DND", false, false, ""],
+    ]);
+
+    const onWithoutSelect = buildIntercom(
+      satellite({
+        voiceSwitches: [{ entityId: "switch.enabled", name: "Intercom enabled", on: true }],
+      }),
+    );
+    assert.deepEqual(buttons(onWithoutSelect), [
+      ["off", "Off", false, false, ""],
       ["ring", "Ring", false, true, ""],
       ["answer", "Answer", false, true, ""],
       ["dnd", "DND", false, true, ""],
@@ -417,6 +429,67 @@ describe("renderIntercom", () => {
     modes[0]?.click();
     assert.deepEqual(switches, ["turn_off"]);
     assert.equal(modes[0]?.getAttribute("aria-pressed"), "true");
+  });
+
+  it("turns intercom on and applies the chosen mode once the answer select reappears", () => {
+    const parent = host();
+    const switches: Array<[string, string]> = [];
+    const selects: Array<[string, string]> = [];
+    const onSwitch: IntercomSwitchChange = (_domain, service, _data, target) => switches.push([service, target.entity_id]);
+    const onSelect: IntercomSelectChange = (_domain, _service, data, target) => selects.push([data.option, target.entity_id]);
+
+    const offWithoutSelect = buildIntercom(
+      satellite({
+        voiceSwitches: [{ entityId: "switch.enabled", name: "Intercom enabled", on: false }],
+      }),
+    );
+    render(parent, offWithoutSelect, onSwitch, undefined, onSelect);
+    const modes = parent.querySelectorAll(".rd-intercom-mode");
+    assert.equal(modes[3]?.disabled, false);
+    modes[3]?.click();
+    assert.deepEqual(switches, [["turn_on", "switch.enabled"]]);
+    assert.deepEqual(selects, []);
+
+    const onWithDefaultSelect = buildIntercom(
+      satellite({
+        voiceSwitches: [{ entityId: "switch.enabled", name: "Intercom enabled", on: true }],
+        voiceSelects: [answerSelect("select.answer", "Ring")],
+      }),
+    );
+    render(parent, onWithDefaultSelect, onSwitch, undefined, onSelect);
+    assert.deepEqual(selects, [["Do not disturb", "select.answer"]]);
+  });
+
+  it("keeps volume controls present and patches DOM in place across mode changes", () => {
+    const parent = host();
+    const offView = buildIntercom(
+      satellite({
+        voiceSwitches: [{ entityId: "switch.enabled", name: "Intercom enabled", on: false }],
+      }),
+    );
+    render(parent, offView);
+    const section = parent.querySelector(".rd-intercom");
+    const volumeRow = parent.querySelector(".rd-intercom-volume");
+    const slider = parent.querySelector(".rd-intercom-slider");
+    const modes = parent.querySelectorAll(".rd-intercom-mode");
+    assert.ok(section && volumeRow && slider);
+    assert.equal(slider.disabled, true);
+    assert.equal(parent.querySelector(".rd-intercom-volume-value")?.textContent, "—");
+
+    const onView = buildIntercom(
+      satellite({
+        voiceSwitches: [{ entityId: "switch.enabled", name: "Intercom enabled", on: true }],
+        voiceSelects: [answerSelect("select.answer", "Ring")],
+        volumes: [{ entityId: "number.intercom_volume", name: "Intercom volume", min: 0, max: 100, step: 5, value: 60 }],
+      }),
+    );
+    render(parent, onView);
+    assert.equal(parent.querySelector(".rd-intercom"), section);
+    assert.equal(parent.querySelector(".rd-intercom-volume"), volumeRow);
+    assert.equal(parent.querySelectorAll(".rd-intercom-mode")[1], modes[1]);
+    assert.equal(slider.disabled, false);
+    assert.equal(slider.value, "60");
+    assert.equal(parent.querySelector(".rd-intercom-volume-value")?.textContent, "60%");
   });
 });
 
