@@ -67,14 +67,6 @@ A [Home Assistant Marketplace](https://www.home-assistant.io/integrations/market
 4. Click **Add**, then search for **Helpmeet: Kiosk Satellite Card** and click **Download**.
 5. Refresh your browser when prompted.
 
-### Manual Installation
-
-1. Download `kiosk-satellite-card.js` from the [latest release](https://github.com/Helpmeeters/kiosk-satellite-card/releases/latest).
-2. Copy it to `/config/www/kiosk-satellite-card.js`.
-3. In Home Assistant, go to **Settings → Dashboards → Resources**, click **Add Resource**, and enter:
-   - **URL**: `/local/kiosk-satellite-card.js`
-   - **Resource type**: `JavaScript Module`
-
 ## Configuration
 
 ### Visual Editor

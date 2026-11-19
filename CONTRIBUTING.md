@@ -24,6 +24,15 @@ npm run build
 
 `npm test` runs the card's tests. `npm run build` writes `dist/kiosk-satellite-card.js`.
 
+### Manual installation
+
+To test a local build in Home Assistant without Marketplace / HACS:
+
+1. Copy `dist/kiosk-satellite-card.js` to `/config/www/kiosk-satellite-card.js`.
+2. In Home Assistant, go to **Settings → Dashboards → Resources**, click **Add Resource**, and enter:
+   - **URL**: `/local/kiosk-satellite-card.js`
+   - **Resource type**: `JavaScript Module`
+
 ## Pull requests
 
 - Keep changes focused. One fix or feature per pull request.
